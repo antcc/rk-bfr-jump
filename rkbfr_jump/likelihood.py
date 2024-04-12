@@ -6,11 +6,12 @@ import numpy as np
 from numba import njit, prange
 from scipy.spatial.distance import cdist
 
-from .utils.utility import LogSqrtTransform
+from .parameters import LogSqrtTransform
 
 
 class RKHSLikelihood:
-    def __init__(self, grid, X, y, transform_sigma=False):
+    def __init__(self, theta_vars, grid, X, y, transform_sigma=False):
+        self.tv = theta_vars
         self.grid = grid
         self.X_T = np.ascontiguousarray(X.T)
         self.y = y
@@ -35,21 +36,24 @@ class RKHSLikelihood:
         Note: Eryn already checks that the theta input values are valid (i.e. within the bounds of the prior).
         """
         theta_components, theta_common = theta
-        beta = np.ascontiguousarray(theta_components[:, 0])
-        tau = np.ascontiguousarray(theta_components[:, 1:2])  # get tau as a column
-        alpha0 = theta_common[0][0]
+
+        beta = np.ascontiguousarray(theta_components[:, self.tv.idx_beta])
+        tau = np.ascontiguousarray(
+            theta_components[:, self.tv.idx_tau]
+        )  # get tau as a column
+        alpha0 = theta_common[0][self.tv.idx_alpha0]
 
         if self.transform_sigma:
-            log_sigma = theta_common[0][1]
+            log_sigma = theta_common[0][self.tv.idx_sigma2]
             sigma2 = LogSqrtTransform.backward(log_sigma)
         else:
-            sigma2 = theta_common[0][1]
+            sigma2 = theta_common[0][self.tv.idx_sigma2]
             log_sigma = LogSqrtTransform.forward(sigma2)
 
         # Compute the indices of the grid corresponding to the parameter tau
-        idx_tau = cdist(tau, self.grid[:, None], "cityblock").argmin(
+        idx_tau = cdist(tau[:, None], self.grid[:, None], "cityblock").argmin(
             axis=1
-        )  # == np.abs(self.grid - tau).argmin(axis=1)
+        )  # == np.abs(self.grid - tau[:, None]).argmin(axis=1)
 
         diff = self.y - alpha0 - self.X_T[idx_tau].T @ beta
         ll = -self.n * log_sigma - 0.5 * (diff @ diff) / sigma2
@@ -97,20 +101,22 @@ class RKHSLikelihood:
         theta_components, theta_common = theta
         groups_components, _ = groups
 
-        beta = np.ascontiguousarray(theta_components[:, 0])
-        tau = np.ascontiguousarray(theta_components[:, 1:2])  # get tau as a column
-        alpha0 = np.ascontiguousarray(theta_common[:, 0])
+        beta = np.ascontiguousarray(theta_components[:, self.tv.idx_beta])
+        tau = np.ascontiguousarray(
+            theta_components[:, self.tv.idx_tau]
+        )  # get tau as a column
+        alpha0 = np.ascontiguousarray(theta_common[:, self.tv.idx_alpha0])
 
         if self.transform_sigma:
-            log_sigma = np.ascontiguousarray(theta_common[:, 1])
+            log_sigma = np.ascontiguousarray(theta_common[:, self.tv.idx_sigma2])
             sigma2 = LogSqrtTransform.backward(log_sigma)
         else:
-            sigma2 = np.ascontiguousarray(theta_common[:, 1])
+            sigma2 = np.ascontiguousarray(theta_common[:, self.tv.idx_sigma2])
             log_sigma = LogSqrtTransform.forward(sigma2)
 
-        idx_tau = cdist(tau, self.grid[:, None], "cityblock").argmin(
+        idx_tau = cdist(tau[:, None], self.grid[:, None], "cityblock").argmin(
             axis=1
-        )  # == np.abs(self.grid - tau).argmin(axis=1)
+        )  # == np.abs(self.grid - tau[:, None]).argmin(axis=1)
         unique_indices = np.unique(groups_components)
 
         ll = self._compute_ll_parallel(

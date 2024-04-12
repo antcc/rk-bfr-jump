@@ -3,13 +3,17 @@ import numpy as np
 from .utils.utility import IgnoreWarnings
 
 
-def predict_pp(chain_components, chain_common, grid, X_test, aggregate_pp, noise=False):
+def predict_pp(
+    chain_components, chain_common, theta_vars, grid, X_test, aggregate_pp, noise=False
+):
     # Replace NaN with 0.0 to "turn off" the corresponding coefficients
     chain_components = np.nan_to_num(chain_components, nan=0.0)
 
-    beta = chain_components[..., 0:1]  # beta is (nsteps, nwalkers, nleaves_max, 1)
-    tau = chain_components[..., 1:2]
-    alpha0 = chain_common[..., 0:1]
+    beta = chain_components[
+        ..., theta_vars.idx_beta, None
+    ]  # (nsteps, nwalkers, nleaves_max, 1)
+    tau = chain_components[..., theta_vars.idx_tau, None]
+    alpha0 = chain_common[..., theta_vars.idx_alpha0, None]
 
     idx = np.abs(grid - tau).argmin(axis=-1)  # idx is (nsteps, nwalkers, nleaves_max)
     X_idx = np.moveaxis(
@@ -20,7 +24,7 @@ def predict_pp(chain_components, chain_common, grid, X_test, aggregate_pp, noise
     )  # result is (nsteps, nwalkers, nfuncs)
 
     if noise:
-        sigma2 = chain_common[..., 1:2]
+        sigma2 = chain_common[..., theta_vars.idx_sigma2, None]
         y_pred_all += np.sqrt(sigma2) * np.random.standard_normal(y_pred_all.shape)
 
     # Summary of pp
@@ -69,9 +73,17 @@ def predict_weighted(
 
 
 def predict_weighted_pp(
-    chain_components, chain_common, nleaves, grid, X_test, aggregate_pp, noise=False
+    chain_components,
+    chain_common,
+    nleaves,
+    theta_vars,
+    grid,
+    X_test,
+    aggregate_pp,
+    noise=False,
 ):
     kwargs_predict_pp = {
+        "theta_vars": theta_vars,
         "grid": grid,
         "X_test": X_test,
         "aggregate_pp": aggregate_pp,
@@ -89,6 +101,7 @@ def predict_map_pp(
     chain_common,
     nleaves,
     map_p,
+    theta_vars,
     grid,
     X_test,
     aggregate_pp,
@@ -97,14 +110,20 @@ def predict_map_pp(
     chain_components_p = chain_components[nleaves == map_p]
     chain_common_p = chain_common[nleaves == map_p]
     preds = predict_pp(
-        chain_components_p, chain_common_p, grid, X_test, aggregate_pp, noise=noise
+        chain_components_p,
+        chain_common_p,
+        theta_vars,
+        grid,
+        X_test,
+        aggregate_pp,
+        noise=noise,
     )
 
     return preds
 
 
 def predict_pe(
-    chain_components_p, chain_common_p, p, grid, X_test, summary_statistic
+    chain_components_p, chain_common_p, p, theta_vars, grid, X_test, summary_statistic
 ):  # predict point_estimate
     """chain_components_p is of shape (*, nleaves_max, 2), i.e.,
     already flattened on the (nsteps, nwalkers) dimension."""
@@ -114,11 +133,11 @@ def predict_pe(
     chain_components_summary = summary_statistic(chain_components_without_nan, axis=0)
     chain_common_summary = summary_statistic(chain_common_p, axis=0)
 
-    beta = chain_components_summary[:, 0]  # beta is a vector of (p,)
-    tau = chain_components_summary[:, 1:2]  # tau is a vector (p, 1)
-    alpha0 = chain_common_summary[0]  # alpha0 is scalar
+    beta = chain_components_summary[:, theta_vars.idx_beta]  # beta is a vector (p,)
+    tau = chain_components_summary[:, theta_vars.idx_tau]  # tau is a vector (p)
+    alpha0 = chain_common_summary[theta_vars.idx_alpha0]  # alpha0 is scalar
 
-    idx = np.abs(grid - tau).argmin(axis=-1)  # idx is (p,)
+    idx = np.abs(grid - tau[:, None]).argmin(axis=-1)  # idx is (p,)
     X_idx = X_test[:, idx]
     y_pred_all = alpha0 + X_idx @ beta  # result is (nfunc,)
 
@@ -126,9 +145,10 @@ def predict_pe(
 
 
 def predict_weighted_summary(
-    chain_components, chain_common, nleaves, grid, X_test, summary_statistic
+    chain_components, chain_common, nleaves, theta_vars, grid, X_test, summary_statistic
 ):
     kwargs_predict_pe = {
+        "theta_vars": theta_vars,
         "grid": grid,
         "X_test": X_test,
         "summary_statistic": summary_statistic,
@@ -146,12 +166,25 @@ def predict_weighted_summary(
 
 
 def predict_map_summary(
-    chain_components, chain_common, nleaves, map_p, grid, X_test, summary_statistic
+    chain_components,
+    chain_common,
+    nleaves,
+    map_p,
+    theta_vars,
+    grid,
+    X_test,
+    summary_statistic,
 ):
     chain_components_p = chain_components[nleaves == map_p]
     chain_common_p = chain_common[nleaves == map_p]
     preds = predict_pe(
-        chain_components_p, chain_common_p, map_p, grid, X_test, summary_statistic
+        chain_components_p,
+        chain_common_p,
+        map_p,
+        theta_vars,
+        grid,
+        X_test,
+        summary_statistic,
     )
 
     return preds
@@ -161,6 +194,7 @@ def predict_vs(
     chain_components_p,
     chain_common_p,
     p,
+    theta_vars,
     grid,
     X_train,
     y_train,
@@ -174,11 +208,11 @@ def predict_vs(
         :, :p, :
     ]  # remove NaN values before summarizing
     chain_components_summary = summary_statistic(chain_components_without_nan, axis=0)
-    tau = chain_components_summary[:, 1:2]  # tau is a vector (p, 1)
+    tau = chain_components_summary[:, theta_vars.idx_tau]  # tau is a vector (p,)
     idx = np.sort(
-        np.abs(grid - tau).argmin(axis=-1)
+        np.abs(grid - tau[:, None]).argmin(axis=-1)
     )  # idx is (p,), sorted for convenience
-    idx = np.unique(idx)  # Do not repear components
+    idx = np.unique(idx)  # Do not repeat components
 
     with IgnoreWarnings():
         reg.fit(X_train[:, idx], y_train)
@@ -191,6 +225,7 @@ def predict_weighted_variable_selection(
     chain_components,
     chain_common,
     nleaves,
+    theta_vars,
     grid,
     X_train,
     y_train,
@@ -199,6 +234,7 @@ def predict_weighted_variable_selection(
     reg,
 ):
     kwargs_predict_vs = {
+        "theta_vars": theta_vars,
         "grid": grid,
         "X_train": X_train,
         "y_train": y_train,
@@ -223,6 +259,7 @@ def predict_map_variable_selection(
     chain_common,
     nleaves,
     map_p,
+    theta_vars,
     grid,
     X_train,
     y_train,
@@ -236,6 +273,7 @@ def predict_map_variable_selection(
         chain_components_p,
         chain_common_p,
         map_p,
+        theta_vars,
         grid,
         X_train,
         y_train,
@@ -243,4 +281,5 @@ def predict_map_variable_selection(
         summary_statistic,
         reg,
     )
+
     return preds

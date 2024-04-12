@@ -4,10 +4,11 @@ import numpy as np
 from arviz.labels import MapLabeller
 
 
-def plot_dataset_regression(X, y, plot_means=True, n_samples=None, figsize=(9, 4)):
+def plot_dataset_regression(
+    X, y, grid, plot_means=True, n_samples=None, figsize=(9, 4)
+):
     fig, axs = plt.subplots(1, 2, figsize=figsize)
     n, N = X.shape
-    grid = np.linspace(1.0 / N, 1.0, N)
 
     if n_samples is None:
         n_samples = n
@@ -34,12 +35,11 @@ def plot_dataset_regression(X, y, plot_means=True, n_samples=None, figsize=(9, 4
 
 
 def plot_dataset_classification(
-    X, y, plot_means=True, n_samples=None, figsize=(9, 4), ax=None
+    X, y, grid, plot_means=True, n_samples=None, figsize=(9, 4), ax=None
 ):
     fig, axs = plt.subplots(1, 2, figsize=figsize)
 
     n, N = X.shape
-    grid = np.linspace(1.0 / N, 1.0, N)
     n_samples_0 = (y == 0).sum()
     n_samples_1 = (y == 1).sum()
 

@@ -7,14 +7,10 @@ import warnings
 
 import arviz as az
 import numpy as np
-from numba import njit
 from sklearn.exceptions import ConvergenceWarning, FitFailedWarning
 
-###
+
 # Custom context managers for handling warnings
-###
-
-
 class IgnoreWarnings:
     key = "PYTHONWARNINGS"
 
@@ -39,63 +35,13 @@ class IgnoreWarnings:
         os.environ[self.key] = self.state
 
 
-###
-# Helper classes for parameter transformations
-###
-
-
-class LogSqrtTransform:
-    """Transformation x --> log(sqrt(x))"""
-
-    @staticmethod
-    @njit(cache=True, fastmath=True, parallel=True)
-    def forward(x):
-        return np.log(np.sqrt(x))
-
-    @staticmethod
-    @njit(cache=True, fastmath=True, parallel=True)
-    def backward(y):
-        return np.exp(y) ** 2
-
-
-class LogTransform:
-    """Transformation x --> log(x)"""
-
-    @staticmethod
-    @njit(cache=True, fastmath=True, parallel=True)
-    def forward(x):
-        return np.log(x)
-
-    @staticmethod
-    @njit(cache=True, fastmath=True, parallel=True)
-    def backward(y):
-        return np.exp(y)
-
-
-class SqrtTransform:
-    """Transformation x --> sqrt(x)"""
-
-    @staticmethod
-    @njit(cache=True, fastmath=True, parallel=True)
-    def forward(x):
-        return np.sqrt(x)
-
-    @staticmethod
-    @njit(cache=True, fastmath=True, parallel=True)
-    def backward(y):
-        return y**2
-
-
-###
-# Misc.
-###
-
-
+# Compute the "mode" of a continuous kde
 def mode_kde(arr):
     x, density = az.kde(arr)
     return x[np.argmax(density)]
 
 
+# Function to color a list of estimators present in another DataFrame
 def color_reference_methods(x, df):
     return [
         "color: orange; hide: axis" if val in list(df["Estimator"]) else "" for val in x

@@ -1,21 +1,23 @@
 from copy import deepcopy
 
 import numpy as np
-from eryn.moves import DistributionGenerateRJ, GroupStretchMove, MultipleTryMove
-from eryn.prior import ProbDistContainer
+from eryn.moves import GroupStretchMove, MultipleTryMove, ReversibleJumpMove
 from numba import njit, prange
 from scipy.spatial.distance import cdist
 
 
 class GroupMoveRKHS(GroupStretchMove):
-    def __init__(self, dist_measure="norm", **kwargs):
+    def __init__(self, theta_vars, dist_measure="norm", **kwargs):
         super(GroupMoveRKHS, self).__init__(**kwargs)
+        self.tv = theta_vars
+        self.dist_measure = dist_measure
+
         if dist_measure == "norm":
             self.idx_reference = None
         elif dist_measure == "beta":
-            self.idx_reference = 0
+            self.idx_reference = theta_vars.idx_beta
         elif dist_measure == "tau":
-            self.idx_reference = 1
+            self.idx_reference = theta_vars.idx_tau
         else:
             raise ValueError(f"Incorrect value {dist_measure} for dist_measure")
 
@@ -64,13 +66,12 @@ class GroupMoveRKHS(GroupStretchMove):
         return friends
 
 
-class RJMoveRKHS(DistributionGenerateRJ):
+# Our equivalent of Eryn's DistributionGenerateRJ move, adapted for a joint prior
+# and njitted for performance.
+class RJMoveRKHS(ReversibleJumpMove):
     def __init__(self, priors, *args, **kwargs):
         self.priors = priors
-        generate_dist = {  # unused; only for compatibility
-            "components": ProbDistContainer({(0, 1): priors})
-        }
-        super(RJMoveRKHS, self).__init__(generate_dist, *args, **kwargs)
+        super(RJMoveRKHS, self).__init__(*args, **kwargs)
 
     @staticmethod
     @njit(cache=True, fastmath=True)
@@ -238,205 +239,9 @@ class RJMoveRKHS(DistributionGenerateRJ):
         return q, new_inds, factors
 
 
-# CAMBIO: Adaptar la llamada a get_model_change_proposal para usar nuestra función con njit
-class MultipleTryMoveRJRKHS(MultipleTryMove):
-    def get_proposal(
-        self,
-        branches_coords,
-        branches_inds,
-        nleaves_min_all,
-        nleaves_max_all,
-        random,
-        **kwargs,
-    ):
-        """Make a proposal
-
-        Args:
-            all_coords (dict): Keys are ``branch_names``. Values are
-                np.ndarray[ntemps, nwalkers, nleaves_max, ndim]. These are the curent
-                coordinates for all the walkers.
-            all_inds (dict): Keys are ``branch_names``. Values are
-                np.ndarray[ntemps, nwalkers, nleaves_max]. These are the boolean
-                arrays marking which leaves are currently used within each walker.
-            nleaves_min_all (list): Minimum values of leaf ount for each model. Must have same order as ``all_cords``.
-            nleaves_max_all (list): Maximum values of leaf ount for each model. Must have same order as ``all_cords``.
-            random (object): Current random state of the sampler.
-            **kwargs (ignored): For modularity.
-
-        Returns:
-            tuple: Tuple containing proposal information.
-                First entry is the new coordinates as a dictionary with keys
-                as ``branch_names`` and values as
-                ``double `` np.ndarray[ntemps, nwalkers, nleaves_max, ndim] containing
-                proposed coordinates. Second entry is the new ``inds`` array with
-                boolean values flipped for added or removed sources. Third entry
-                is the factors associated with the
-                proposal necessary for detailed balance. This is effectively
-                any term in the detailed balance fraction. +log of factors if
-                in the numerator. -log of factors if in the denominator.
-
-        """
-
-        if len(list(branches_coords.keys())) > 1:
-            raise ValueError("Can only propose change to one model at a time with MT.")
-
-        # get main key
-        key_in = list(branches_coords.keys())[0]
-        self.key_in = key_in
-
-        if branches_inds is None:
-            raise ValueError("In MT RJ proposal, branches_inds cannot be None.")
-
-        ntemps, nwalkers, nleaves_max, ndim = branches_coords[key_in].shape
-
-        # get temperature information
-        betas_here = np.repeat(
-            self.temperature_control.betas[:, None], nwalkers, axis=-1
-        ).flatten()
-
-        # current Likelihood and prior information
-        ll_here = self.current_state.log_like.flatten()
-        lp_here = self.current_state.log_prior.flatten()
-
-        # do rj setup
-        assert len(nleaves_min_all) == 1 and len(nleaves_max_all) == 1
-        nleaves_min = nleaves_min_all[key_in]
-        nleaves_max = nleaves_max_all[key_in]
-
-        if nleaves_min == nleaves_max:
-            raise ValueError("MT RJ proposal requires that nleaves_min != nleaves_max.")
-        elif nleaves_min > nleaves_max:
-            raise ValueError("nleaves_min is greater than nleaves_max. Not allowed.")
-
-        # get the inds adjustment information
-        # choose whether to add or remove
-        inds_components = branches_inds[key_in]
-        nleaves = inds_components.sum(axis=-1)
-        if self.fix_change is None:
-            change = random.choice([-1, +1], size=nleaves.shape)
-        else:
-            change = np.full(nleaves.shape, self.fix_change)
-
-        # get the inds adjustment information
-        # For birth and deaths, each row is the index of (ntemp, nwalker, nleaves_max) that changes
-        seed = random.get_state()[1][0]
-        inds_birth_array, inds_death_array = self.get_model_change_proposal(
-            inds_components,
-            change,
-            nleaves_min,
-            nleaves_max,
-            nleaves,
-            seed,
-        )
-
-        all_inds_for_change = {"+1": inds_birth_array, "-1": inds_death_array}
-
-        # preparing leaf information for going into the proposal
-        inds_leaves_rj = np.zeros(ntemps * nwalkers, dtype=int)
-        coords_in = np.zeros((ntemps * nwalkers, ndim))
-        inds_reverse_rj = None
-
-        # prepare proposal dictionaries
-        new_inds = deepcopy(branches_inds)
-        q = deepcopy(branches_coords)
-        for change in all_inds_for_change.keys():
-            if change not in ["+1", "-1"]:
-                raise ValueError("MT RJ is only implemented for +1/-1 moves.")
-
-            # get indicies of changing leaves
-            temp_inds = all_inds_for_change[change][:, 0]
-            walker_inds = all_inds_for_change[change][:, 1]
-            leaf_inds = all_inds_for_change[change][:, 2]
-
-            # leaf index to change
-            inds_leaves_rj[temp_inds * nwalkers + walker_inds] = leaf_inds
-            coords_in[temp_inds * nwalkers + walker_inds] = branches_coords[key_in][
-                (temp_inds, walker_inds, leaf_inds)
-            ]
-
-            # adjustment of indices
-            new_val = {"+1": True, "-1": False}[change]
-
-            # adjust indices
-            new_inds[key_in][(temp_inds, walker_inds, leaf_inds)] = new_val
-
-            if change == "-1":
-                # which walkers are removing
-                inds_reverse_rj = temp_inds * nwalkers + walker_inds
-
-        # setup reversal coords and inds
-        # need to determine Likelihood and prior of removed binaries.
-        # this goes into the multiple try proposal as previous ll and lp
-        temp_reverse_coords = {}
-        temp_reverse_inds = {}
-
-        for key in self.current_state.branches:
-            (
-                ntemps_tmp,
-                nwalkers_tmp,
-                nleaves_max_tmp,
-                ndim_tmp,
-            ) = self.current_state.branches[key].shape
-
-            # coords from reversal
-            temp_reverse_coords[key] = self.current_state.branches[key].coords.reshape(
-                ntemps_tmp * nwalkers_tmp, nleaves_max_tmp, ndim_tmp
-            )[inds_reverse_rj][None, :]
-
-            # which inds array to use
-            inds_tmp_here = (
-                new_inds[key]
-                if key == key_in
-                else self.current_state.branches[key].inds
-            )
-            temp_reverse_inds[key] = inds_tmp_here.reshape(
-                ntemps * nwalkers, nleaves_max_tmp
-            )[inds_reverse_rj][None, :]
-
-        # calculate information for the reverse
-        lp_reverse_here = self.current_model.compute_log_prior_fn(
-            temp_reverse_coords, inds=temp_reverse_inds
-        )[0]
-        ll_reverse_here = self.current_model.compute_log_like_fn(
-            temp_reverse_coords, inds=temp_reverse_inds, logp=lp_here
-        )[0]
-
-        # fill the here values
-        ll_here[inds_reverse_rj] = ll_reverse_here
-        lp_here[inds_reverse_rj] = lp_reverse_here
-
-        # get mt proposal
-        generated_points, factors = self.get_mt_proposal(
-            coords_in,
-            random,
-            betas=betas_here,
-            ll_in=ll_here,
-            lp_in=lp_here,
-            inds_leaves_rj=inds_leaves_rj,
-            inds_reverse_rj=inds_reverse_rj,
-        )
-
-        # for reading outside
-        self.mt_ll = self.mt_ll.reshape(ntemps, nwalkers)
-        self.mt_lp = self.mt_lp.reshape(ntemps, nwalkers)
-
-        # which walkers have information added
-        inds_forward_rj = np.delete(np.arange(coords_in.shape[0]), inds_reverse_rj)
-
-        # updated the coordinates
-        temp_inds = all_inds_for_change["+1"][:, 0]
-        walker_inds = all_inds_for_change["+1"][:, 1]
-        leaf_inds = all_inds_for_change["+1"][:, 2]
-        q[key_in][(temp_inds, walker_inds, leaf_inds)] = generated_points[
-            inds_forward_rj
-        ]
-
-        return q, new_inds, factors.reshape(ntemps, nwalkers)
-
-
-# Cambio: usar nuestro priors all_models_together y sus funciones específicas (logpdf_components, rvs).
-# No nos hace falta en este caso pasar los índices.
-class MTRJMoveRKHS(MultipleTryMoveRJRKHS, RJMoveRKHS):
+# Our equivalent of Eryn's MTDistGenMoveRJ, adapted for joint priors and using the
+# njitted function of our RJ move.
+class MTRJMoveRKHS(MultipleTryMove, RJMoveRKHS):
     def __init__(self, priors, *args, **kwargs):
         """Perform a reversible-jump multiple try move based on a distribution.
 
@@ -445,14 +250,13 @@ class MTRJMoveRKHS(MultipleTryMoveRJRKHS, RJMoveRKHS):
         This is effectively an example of the mutliple try class inheritance structure.
 
         Args:
-            generate_dist (dict): Keys are branch names and values are :class:`ProbDistContainer` objects
-                that have ``logpdf`` and ``rvs`` methods. If you
+            priors (dict).
             *args (tuple, optional): Additional arguments to pass to parent classes.
             **kwargs (dict, optional): Keyword arguments passed to parent classes.
 
         """
         kwargs["rj"] = True
-        MultipleTryMoveRJRKHS.__init__(self, **kwargs)
+        MultipleTryMove.__init__(self, **kwargs)
         RJMoveRKHS.__init__(self, priors, *args, **kwargs)
 
     def special_generate_logpdf(self, generated_coords):
@@ -624,3 +428,201 @@ class MTRJMoveRKHS(MultipleTryMoveRJRKHS, RJMoveRKHS):
         )
         lp = self.current_model.compute_log_prior_fn(coords_in, inds=inds_in)
         return lp.reshape(-1, self.num_try)
+
+    # This is effectively the same function as "MultipleTryMoveRJ.get_proposal", but using our own
+    # njitted function self.get_model_change_proposal from RJMoveRKHS.
+    def get_proposal(
+        self,
+        branches_coords,
+        branches_inds,
+        nleaves_min_all,
+        nleaves_max_all,
+        random,
+        **kwargs,
+    ):
+        """Make a proposal
+
+        Args:
+            all_coords (dict): Keys are ``branch_names``. Values are
+                np.ndarray[ntemps, nwalkers, nleaves_max, ndim]. These are the curent
+                coordinates for all the walkers.
+            all_inds (dict): Keys are ``branch_names``. Values are
+                np.ndarray[ntemps, nwalkers, nleaves_max]. These are the boolean
+                arrays marking which leaves are currently used within each walker.
+            nleaves_min_all (list): Minimum values of leaf ount for each model. Must have same order as ``all_cords``.
+            nleaves_max_all (list): Maximum values of leaf ount for each model. Must have same order as ``all_cords``.
+            random (object): Current random state of the sampler.
+            **kwargs (ignored): For modularity.
+
+        Returns:
+            tuple: Tuple containing proposal information.
+                First entry is the new coordinates as a dictionary with keys
+                as ``branch_names`` and values as
+                ``double `` np.ndarray[ntemps, nwalkers, nleaves_max, ndim] containing
+                proposed coordinates. Second entry is the new ``inds`` array with
+                boolean values flipped for added or removed sources. Third entry
+                is the factors associated with the
+                proposal necessary for detailed balance. This is effectively
+                any term in the detailed balance fraction. +log of factors if
+                in the numerator. -log of factors if in the denominator.
+
+        """
+
+        if len(list(branches_coords.keys())) > 1:
+            raise ValueError("Can only propose change to one model at a time with MT.")
+
+        # get main key
+        key_in = list(branches_coords.keys())[0]
+        self.key_in = key_in
+
+        if branches_inds is None:
+            raise ValueError("In MT RJ proposal, branches_inds cannot be None.")
+
+        ntemps, nwalkers, nleaves_max, ndim = branches_coords[key_in].shape
+
+        # get temperature information
+        betas_here = np.repeat(
+            self.temperature_control.betas[:, None], nwalkers, axis=-1
+        ).flatten()
+
+        # current Likelihood and prior information
+        ll_here = self.current_state.log_like.flatten()
+        lp_here = self.current_state.log_prior.flatten()
+
+        # do rj setup
+        assert len(nleaves_min_all) == 1 and len(nleaves_max_all) == 1
+        nleaves_min = nleaves_min_all[key_in]
+        nleaves_max = nleaves_max_all[key_in]
+
+        if nleaves_min == nleaves_max:
+            raise ValueError("MT RJ proposal requires that nleaves_min != nleaves_max.")
+        elif nleaves_min > nleaves_max:
+            raise ValueError("nleaves_min is greater than nleaves_max. Not allowed.")
+
+        # get the inds adjustment information
+        # choose whether to add or remove
+        inds_components = branches_inds[key_in]
+        nleaves = inds_components.sum(axis=-1)
+        if self.fix_change is None:
+            change = random.choice([-1, +1], size=nleaves.shape)
+        else:
+            change = np.full(nleaves.shape, self.fix_change)
+
+        # get the inds adjustment information
+        # For birth and deaths, each row is the index of (ntemp, nwalker, nleaves_max) that changes
+        seed = random.get_state()[1][0]
+        inds_birth_array, inds_death_array = self.get_model_change_proposal(
+            inds_components,
+            change,
+            nleaves_min,
+            nleaves_max,
+            nleaves,
+            seed,
+        )
+
+        all_inds_for_change = {"+1": inds_birth_array, "-1": inds_death_array}
+
+        # preparing leaf information for going into the proposal
+        inds_leaves_rj = np.zeros(ntemps * nwalkers, dtype=int)
+        coords_in = np.zeros((ntemps * nwalkers, ndim))
+        inds_reverse_rj = None
+
+        # prepare proposal dictionaries
+        new_inds = deepcopy(branches_inds)
+        q = deepcopy(branches_coords)
+        for change in all_inds_for_change.keys():
+            if change not in ["+1", "-1"]:
+                raise ValueError("MT RJ is only implemented for +1/-1 moves.")
+
+            # get indicies of changing leaves
+            temp_inds = all_inds_for_change[change][:, 0]
+            walker_inds = all_inds_for_change[change][:, 1]
+            leaf_inds = all_inds_for_change[change][:, 2]
+
+            # leaf index to change
+            inds_leaves_rj[temp_inds * nwalkers + walker_inds] = leaf_inds
+            coords_in[temp_inds * nwalkers + walker_inds] = branches_coords[key_in][
+                (temp_inds, walker_inds, leaf_inds)
+            ]
+
+            # adjustment of indices
+            new_val = {"+1": True, "-1": False}[change]
+
+            # adjust indices
+            new_inds[key_in][(temp_inds, walker_inds, leaf_inds)] = new_val
+
+            if change == "-1":
+                # which walkers are removing
+                inds_reverse_rj = temp_inds * nwalkers + walker_inds
+
+        if inds_reverse_rj is not None:
+            # setup reversal coords and inds
+            # need to determine Likelihood and prior of removed binaries.
+            # this goes into the multiple try proposal as previous ll and lp
+            temp_reverse_coords = {}
+            temp_reverse_inds = {}
+
+            for key in self.current_state.branches:
+                (
+                    ntemps_tmp,
+                    nwalkers_tmp,
+                    nleaves_max_tmp,
+                    ndim_tmp,
+                ) = self.current_state.branches[key].shape
+
+                # coords from reversal
+                temp_reverse_coords[key] = self.current_state.branches[
+                    key
+                ].coords.reshape(ntemps_tmp * nwalkers_tmp, nleaves_max_tmp, ndim_tmp)[
+                    inds_reverse_rj
+                ][None, :]
+
+                # which inds array to use
+                inds_tmp_here = (
+                    new_inds[key]
+                    if key == key_in
+                    else self.current_state.branches[key].inds
+                )
+                temp_reverse_inds[key] = inds_tmp_here.reshape(
+                    ntemps * nwalkers, nleaves_max_tmp
+                )[inds_reverse_rj][None, :]
+
+            # calculate information for the reverse
+            lp_reverse_here = self.current_model.compute_log_prior_fn(
+                temp_reverse_coords, inds=temp_reverse_inds
+            )[0]
+            ll_reverse_here = self.current_model.compute_log_like_fn(
+                temp_reverse_coords, inds=temp_reverse_inds, logp=lp_here
+            )[0]
+
+            # fill the here values
+            ll_here[inds_reverse_rj] = ll_reverse_here
+            lp_here[inds_reverse_rj] = lp_reverse_here
+
+        # get mt proposal
+        generated_points, factors = self.get_mt_proposal(
+            coords_in,
+            random,
+            betas=betas_here,
+            ll_in=ll_here,
+            lp_in=lp_here,
+            inds_leaves_rj=inds_leaves_rj,
+            inds_reverse_rj=inds_reverse_rj,
+        )
+
+        # for reading outside
+        self.mt_ll = self.mt_ll.reshape(ntemps, nwalkers)
+        self.mt_lp = self.mt_lp.reshape(ntemps, nwalkers)
+
+        # which walkers have information added
+        inds_forward_rj = np.delete(np.arange(coords_in.shape[0]), inds_reverse_rj)
+
+        # updated the coordinates
+        temp_inds = all_inds_for_change["+1"][:, 0]
+        walker_inds = all_inds_for_change["+1"][:, 1]
+        leaf_inds = all_inds_for_change["+1"][:, 2]
+        q[key_in][(temp_inds, walker_inds, leaf_inds)] = generated_points[
+            inds_forward_rj
+        ]
+
+        return q, new_inds, factors.reshape(ntemps, nwalkers)

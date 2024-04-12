@@ -1,11 +1,8 @@
 # encoding: utf-8
 
-import sys
-
-sys.path.append("/home/antcc/PhD/TFM/rk-bfr")
 import numpy as np
-from rkbfr.bayesian_model import ThetaSpace, apply_label_noise, generate_response_linear
 from scipy.integrate import trapz
+from scipy.special import expit
 
 
 def brownian_kernel(s, t, sigma=1.0):
@@ -95,12 +92,9 @@ def generate_rkhs_dataset(
         rng = np.random.default_rng()
 
     X_0 = X - X.mean(axis=0)  # The RKHS model assumes centered variables
-    theta_true = np.concatenate((beta, tau, [alpha0], [sigma2]))
 
-    p = len(beta)
-    theta_space = ThetaSpace(p, grid)
     y = generate_response_linear(
-        X_0, theta_true, theta_space, noise=sigma2 > 0.0, rng=rng
+        np.asarray(beta), np.asarray(tau), alpha0, sigma2, X_0, grid, rng=rng
     )
 
     return y
@@ -148,6 +142,84 @@ def generate_mixture_dataset(
     return X, y
 
 
-def normalize_grid(grid, low=0, high=1):
+def generate_response_linear(beta, tau, alpha0, sigma2, X, grid, rng=None):
+    """Generate a linear RKHS response Y given X and θ"""
+    idx = np.abs(grid - tau[:, None]).argmin(axis=-1)
+    y = alpha0 + X[:, idx] @ beta
+
+    if sigma2 > 0.0:
+        if rng is None:
+            rng = np.random.default_rng()
+
+        y += np.sqrt(sigma2) * rng.standard_normal(size=y.shape)
+
+    return y
+
+
+def generate_response_logistic(
+    X, theta, theta_space, noise=True, return_prob=False, th=0.5, rng=None
+):
+    """Generate a logistic RKHS response Y given X and θ.
+
+    Returns the response vector and (possibly) the probabilities associated.
+    """
+    y_lin = generate_response_linear(X, theta, theta_space, noise=False)
+
+    if noise:
+        y = probability_to_label(y_lin, rng=rng)
+    else:
+        if th == 0.5:
+            # sigmoid(x) >= 0.5 iff x >= 0
+            y = apply_threshold(y_lin, 0.0)
+        else:
+            y = apply_threshold(expit(y_lin), th)
+
+    if return_prob:
+        return expit(y_lin), y
+    else:
+        return y
+
+
+def apply_threshold(y, th=0.5):
+    """Convert probabilities to class labels."""
+    y_th = np.copy(y).astype(int)
+    y_th[..., y >= th] = 1
+    y_th[..., y < th] = 0
+
+    return y_th
+
+
+def probability_to_label(y_lin, random_noise=None, rng=None):
+    """Convert probabilities into class labels."""
+    if rng is None:
+        rng = np.random.default_rng()
+
+    labels = rng.binomial(1, expit(y_lin))
+
+    if random_noise is not None:
+        labels = apply_label_noise(labels, random_noise, rng)
+
+    return labels
+
+
+def apply_label_noise(y, noise_frac=0.05, rng=None):
+    """Apply a random noise to the labels."""
+    if rng is None:
+        rng = np.random.default_rng()
+
+    y_noise = y.copy()
+    n_noise = int(len(y) * noise_frac)
+
+    idx_0 = rng.choice(np.where(y == 0)[0], size=n_noise)
+    idx_1 = rng.choice(np.where(y == 1)[0], size=n_noise)
+
+    y_noise[idx_0] = 1
+    y_noise[idx_1] = 0
+
+    return y_noise
+
+
+# Normalize a grid to [0,1]
+def normalize_grid(grid):
     g_min, g_max = np.min(grid), np.max(grid)
     return (grid - g_min) / (g_max - g_min)

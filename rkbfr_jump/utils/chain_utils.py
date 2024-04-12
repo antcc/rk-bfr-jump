@@ -9,11 +9,12 @@ import numpy as np
 from scipy.spatial.distance import pdist
 from scipy.stats import norm
 
-from .utility import LogSqrtTransform
+from ..parameters import LogSqrtTransform
 
 
 def get_full_chain_at_T(
     sampler,
+    theta_vars,
     grid,
     X_std_orig,
     Y_std_orig,
@@ -26,28 +27,33 @@ def get_full_chain_at_T(
     chain = deepcopy(sampler.get_chain(discard=discard))
 
     if transform_sigma:
-        chain["common"][:, T, ..., 1] = LogSqrtTransform.backward(
-            chain["common"][:, T, ..., 1]
+        chain["common"][:, T, ..., theta_vars.idx_sigma2] = LogSqrtTransform.backward(
+            chain["common"][:, T, ..., theta_vars.idx_sigma2]
         )
 
     chain_components = chain["components"][:, T, ...]
     chain_common = chain["common"][:, T, ...].squeeze()
 
     # Revert components back to original scale
-    idx_tau = np.abs(grid - chain_components[..., 1:2]).argmin(axis=-1)
-    chain_components[..., 0] = (Y_std_orig / X_std_orig[idx_tau]) * chain_components[
-        ..., 0
-    ]
-    chain_common[..., 0] *= Y_std_orig
-    chain_common[..., 1] *= Y_std_orig**2
+    tau = chain_components[..., theta_vars.idx_tau, None]
+    idx_tau = np.abs(grid - tau).argmin(axis=-1)
+    chain_components[..., theta_vars.idx_beta] = (
+        Y_std_orig / X_std_orig[idx_tau]
+    ) * chain_components[..., theta_vars.idx_beta]
+    chain_common[..., theta_vars.idx_alpha0] *= Y_std_orig
+    chain_common[..., theta_vars.idx_sigma2] *= Y_std_orig**2
 
     if relabel_strategy == "auto":  # Relabeling algorithm of Simola et al. (2021)
         beta_flat = np.sort(
-            chain_components[..., 0].reshape(-1, sampler.nleaves_max["components"]),
+            chain_components[..., theta_vars.idx_beta].reshape(
+                -1, sampler.nleaves_max["components"]
+            ),
             axis=-1,
         )
         tau_flat = np.sort(
-            chain_components[..., 1].reshape(-1, sampler.nleaves_max["components"]),
+            chain_components[..., theta_vars.idx_tau].reshape(
+                -1, sampler.nleaves_max["components"]
+            ),
             axis=-1,
         )
 
@@ -71,10 +77,16 @@ def get_full_chain_at_T(
         # Look for the maximum pairwise distance
         pdist_beta_max = np.max(pdist(beta_scale.reshape(-1, 1)))
         pdist_tau_max = np.max(pdist(tau_scale.reshape(-1, 1)))
-        idx_order = 0 if pdist_beta_max > pdist_tau_max else 1
+        idx_order = (
+            theta_vars.idx_beta
+            if pdist_beta_max > pdist_tau_max
+            else theta_vars.idx_tau
+        )
 
     else:  # Manual relabeling
-        idx_order = 0 if relabel_strategy == "beta" else 1
+        idx_order = (
+            theta_vars.idx_beta if relabel_strategy == "beta" else theta_vars.idx_tau
+        )
 
     # Order the last dimension based on b or t, maintaining shape and the correspondence b_i <--> t_i
     sorted_indices = np.argsort(chain_components[..., idx_order], axis=-1)
@@ -92,13 +104,13 @@ def get_full_chain_at_T(
     return chain_components, chain_common, inds_components, inds_common, idx_order
 
 
-def get_flat_chain_components(coords, ndim):
+def get_flat_chain_components(coords, theta_vars, ndim):
     """Simple utility function to extract the flat chains for all the parameters"""
-    coords_T_beta = coords[..., 0].flatten()
-    coords_T_tau = coords[..., 1].flatten()
+    coords_T_beta = coords[..., theta_vars.idx_beta].flatten()
+    coords_T_tau = coords[..., theta_vars.idx_tau].flatten()
     valid_idx = ~np.isnan(coords_T_beta)
     samples_flat = np.zeros((np.sum(valid_idx), ndim))
-    samples_flat[:, 0] = coords_T_beta[valid_idx]
-    samples_flat[:, 1] = coords_T_tau[valid_idx]
+    samples_flat[:, theta_vars.idx_beta] = coords_T_beta[valid_idx]
+    samples_flat[:, theta_vars.idx_tau] = coords_T_tau[valid_idx]
 
     return samples_flat
