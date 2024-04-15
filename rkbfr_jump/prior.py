@@ -10,8 +10,8 @@ class jeffreys_prior:
     """Jeffrey's prior P(alpha0, sigma2) ∝ 1/sigma2. It is equivalent to a flat prior
     on (alpha0, log_sigma)"""
 
-    def __init__(self, theta_vars):
-        self.tv = theta_vars
+    def __init__(self, theta_space):
+        self.ts = theta_space
 
     def logpdf(self, x: np.ndarray) -> np.ndarray:
         """Compute log P(alpha0, sigma2) under Jeffrey's prior.
@@ -30,10 +30,10 @@ class jeffreys_prior:
         """
         res = np.full(x.shape[:-1], -np.inf)
         idx_valid = np.where(
-            x[..., self.tv.idx_sigma2] > 0
+            x[..., self.ts.idx_sigma2] > 0
         )  # identify samples where sigma2 > 0
         res[idx_valid] = -np.log(
-            x[*idx_valid, self.tv.idx_sigma2]
+            x[*idx_valid, self.ts.idx_sigma2]
         )  # log P(alpha0, sigma2) ∝ -log(sigma2)
         return res
 
@@ -66,15 +66,15 @@ def uniform_dist(a, b):
 class RKHSPriorSimple:
     """The prior on p (the number of components) is assumed to be uniform in [1, n_leaves_max]"""
 
-    def __init__(self, theta_vars, grid, sd_beta, transform_sigma=False):
+    def __init__(self, theta_space, grid, sd_beta, transform_sigma=False):
         # Indices in the coords array
-        self.tv = theta_vars
+        self.ts = theta_space
 
         # Independent priors
         self.prior_beta = norm(0, sd_beta)
         self.prior_tau = uniform_dist(grid.min(), grid.max())
         self.prior_alpha0_sigma2 = (
-            flat_prior() if transform_sigma else jeffreys_prior(theta_vars)
+            flat_prior() if transform_sigma else jeffreys_prior(theta_space)
         )
 
         # Other information
@@ -84,8 +84,8 @@ class RKHSPriorSimple:
 
     def logpdf_components(self, coords_components, inds_components=None):
         # Get current values of theta
-        beta = coords_components[..., self.tv.idx_beta]
-        tau = coords_components[..., self.tv.idx_tau]
+        beta = coords_components[..., self.ts.idx_beta]
+        tau = coords_components[..., self.ts.idx_tau]
 
         if inds_components is not None:
             beta = beta[inds_components]
@@ -99,8 +99,8 @@ class RKHSPriorSimple:
 
     def logpdf(self, coords, inds):
         # Get current values of theta
-        beta = coords["components"][..., self.tv.idx_beta]
-        tau = coords["components"][..., self.tv.idx_tau]
+        beta = coords["components"][..., self.ts.idx_beta]
+        tau = coords["components"][..., self.ts.idx_tau]
         alpha0_sigma2 = coords["common"]
 
         # Compute logpdf for beta and tau
@@ -129,7 +129,7 @@ class RKHSPriorSimple:
         out = np.zeros(size_tuple + (2,))
 
         # Only generate samples for the RJ moves (b and t)
-        out[..., self.tv.idx_beta] = self.prior_beta.rvs(size=size)
-        out[..., self.tv.idx_tau] = self.prior_tau.rvs(size=size)
+        out[..., self.ts.idx_beta] = self.prior_beta.rvs(size=size)
+        out[..., self.ts.idx_tau] = self.prior_tau.rvs(size=size)
 
         return out

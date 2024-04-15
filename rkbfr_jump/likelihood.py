@@ -10,8 +10,8 @@ from .parameters import LogSqrtTransform
 
 
 class RKHSLikelihood:
-    def __init__(self, theta_vars, grid, X, y, transform_sigma=False):
-        self.tv = theta_vars
+    def __init__(self, theta_space, grid, X, y, transform_sigma=False):
+        self.ts = theta_space
         self.grid = grid
         self.X_T = np.ascontiguousarray(X.T)
         self.y = y
@@ -37,25 +37,25 @@ class RKHSLikelihood:
         """
         theta_components, theta_common = theta
 
-        beta = np.ascontiguousarray(theta_components[:, self.tv.idx_beta])
-        tau = np.ascontiguousarray(
-            theta_components[:, self.tv.idx_tau]
-        )  # get tau as a column
-        alpha0 = theta_common[0][self.tv.idx_alpha0]
+        # Avoid calling functions for getting the individual variables; in this part
+        # of the code efficiency is critical
+        beta = np.ascontiguousarray(theta_components[:, self.ts.idx_beta])
+        tau = np.ascontiguousarray(theta_components[:, self.ts.idx_tau])
+        alpha0 = theta_common[0][self.ts.idx_alpha0]
 
         if self.transform_sigma:
-            log_sigma = theta_common[0][self.tv.idx_sigma2]
+            log_sigma = theta_common[0][self.ts.idx_sigma2]
             sigma2 = LogSqrtTransform.backward(log_sigma)
         else:
-            sigma2 = theta_common[0][self.tv.idx_sigma2]
+            sigma2 = theta_common[0][self.ts.idx_sigma2]
             log_sigma = LogSqrtTransform.forward(sigma2)
 
         # Compute the indices of the grid corresponding to the parameter tau
-        idx_tau = cdist(tau[:, None], self.grid[:, None], "cityblock").argmin(
-            axis=1
-        )  # == np.abs(self.grid - tau[:, None]).argmin(axis=1)
+        idx_tau_grid = cdist(tau[:, None], self.grid[:, None], "cityblock").argmin(
+            axis=-1
+        )  # == np.abs(self.grid - tau[:, None]).argmin(axis=-1)
 
-        diff = self.y - alpha0 - self.X_T[idx_tau].T @ beta
+        diff = self.y - alpha0 - self.X_T[idx_tau_grid].T @ beta
         ll = -self.n * log_sigma - 0.5 * (diff @ diff) / sigma2
 
         return ll
@@ -100,30 +100,30 @@ class RKHSLikelihood:
         """
         theta_components, theta_common = theta
         groups_components, _ = groups
+        unique_indices = np.unique(groups_components)
 
-        beta = np.ascontiguousarray(theta_components[:, self.tv.idx_beta])
+        beta = np.ascontiguousarray(theta_components[:, self.ts.idx_beta])
         tau = np.ascontiguousarray(
-            theta_components[:, self.tv.idx_tau]
+            theta_components[:, self.ts.idx_tau]
         )  # get tau as a column
-        alpha0 = np.ascontiguousarray(theta_common[:, self.tv.idx_alpha0])
+        alpha0 = np.ascontiguousarray(theta_common[:, self.ts.idx_alpha0])
 
         if self.transform_sigma:
-            log_sigma = np.ascontiguousarray(theta_common[:, self.tv.idx_sigma2])
+            log_sigma = np.ascontiguousarray(theta_common[:, self.ts.idx_sigma2])
             sigma2 = LogSqrtTransform.backward(log_sigma)
         else:
-            sigma2 = np.ascontiguousarray(theta_common[:, self.tv.idx_sigma2])
+            sigma2 = np.ascontiguousarray(theta_common[:, self.ts.idx_sigma2])
             log_sigma = LogSqrtTransform.forward(sigma2)
 
-        idx_tau = cdist(tau[:, None], self.grid[:, None], "cityblock").argmin(
-            axis=1
-        )  # == np.abs(self.grid - tau[:, None]).argmin(axis=1)
-        unique_indices = np.unique(groups_components)
+        idx_tau_grid = cdist(tau[:, None], self.grid[:, None], "cityblock").argmin(
+            axis=-1
+        )  # == np.abs(self.grid - tau[:, None]).argmin(axis=-1)
 
         ll = self._compute_ll_parallel(
             groups_components,
             unique_indices,
             beta,
-            idx_tau,
+            idx_tau_grid,
             alpha0,
             sigma2,
             log_sigma,
@@ -145,7 +145,7 @@ class RKHSLikelihood:
         groups_components: np.ndarray,
         unique_indices: np.ndarray,
         beta: np.ndarray,
-        idx_tau: np.ndarray,
+        idx_tau_grid: np.ndarray,
         alpha0: np.ndarray,
         sigma2: np.ndarray,
         log_sigma: np.ndarray,
@@ -163,7 +163,7 @@ class RKHSLikelihood:
         for i in prange(n_unique):
             idx = unique_indices[i]
             mask = np.where(groups_components == idx)
-            X_tau_masked = np.ascontiguousarray(X_T[idx_tau[mask]])
+            X_tau_masked = np.ascontiguousarray(X_T[idx_tau_grid[mask]])
             beta_masked = beta[mask]
             alpha0_masked = alpha0[idx]
             sigma2_masked = sigma2[idx]

@@ -7,17 +7,17 @@ from scipy.spatial.distance import cdist
 
 
 class GroupMoveRKHS(GroupStretchMove):
-    def __init__(self, theta_vars, dist_measure="norm", **kwargs):
+    def __init__(self, theta_space, dist_measure="norm", **kwargs):
         super(GroupMoveRKHS, self).__init__(**kwargs)
-        self.tv = theta_vars
+        self.ts = theta_space
         self.dist_measure = dist_measure
 
         if dist_measure == "norm":
             self.idx_reference = None
         elif dist_measure == "beta":
-            self.idx_reference = theta_vars.idx_beta
+            self.idx_reference = theta_space.idx_beta
         elif dist_measure == "tau":
-            self.idx_reference = theta_vars.idx_tau
+            self.idx_reference = theta_space.idx_tau
         else:
             raise ValueError(f"Incorrect value {dist_measure} for dist_measure")
 

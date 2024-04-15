@@ -144,8 +144,8 @@ def generate_mixture_dataset(
 
 def generate_response_linear(beta, tau, alpha0, sigma2, X, grid, rng=None):
     """Generate a linear RKHS response Y given X and θ"""
-    idx = np.abs(grid - tau[:, None]).argmin(axis=-1)
-    y = alpha0 + X[:, idx] @ beta
+    idx_tau_grid = np.abs(grid - tau[:, None]).argmin(axis=-1)
+    y = alpha0 + X[:, idx_tau_grid] @ beta
 
     if sigma2 > 0.0:
         if rng is None:
