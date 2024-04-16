@@ -4,7 +4,6 @@
 
 import numpy as np
 from numba import njit
-from scipy.spatial.distance import cdist
 
 
 class ThetaSpace:

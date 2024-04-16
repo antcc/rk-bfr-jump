@@ -1,3 +1,4 @@
 .ipynb_checkpoints/
 _*.md
 __pycache__/
+results/

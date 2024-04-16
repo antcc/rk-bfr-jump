@@ -3,6 +3,15 @@
 import numpy as np
 from scipy.integrate import trapz
 from scipy.special import expit
+from skfda.datasets import fetch_cran, fetch_tecator
+from skfda.misc.hat_matrix import NadarayaWatsonHatMatrix
+from skfda.preprocessing.smoothing import KernelSmoother
+from skfda.preprocessing.smoothing.validation import (
+    LinearSmootherGeneralizedCVScorer,
+    SmoothingParameterSearch,
+    akaike_information_criterion,
+)
+from skfda.representation import FDataGrid
 
 
 def brownian_kernel(s, t, sigma=1.0):
@@ -219,7 +228,208 @@ def apply_label_noise(y, noise_frac=0.05, rng=None):
     return y_noise
 
 
-# Normalize a grid to [0,1]
-def normalize_grid(grid):
+def normalize_grid(grid, n_min, n_max):
+    """Normalize a grid to [n_min, n_max]"""
     g_min, g_max = np.min(grid), np.max(grid)
-    return (grid - g_min) / (g_max - g_min)
+    return n_min + (grid - g_min) * (n_max - n_min) / (g_max - g_min)
+
+
+def get_data_linear(
+    is_simulated_data,
+    regressor_type,
+    model_type,
+    n_samples=150,
+    n_grid=100,
+    mean_vector=None,
+    kernel_fn=None,
+    beta_coef_true=None,
+    beta_tau_true=None,
+    initial_smoothing=False,
+    smoothing_params=None,
+    tau_range=(0, 1),
+    return_y_noiseless=False,
+    rng=None,
+):
+    if rng is None:
+        rng = np.random.default_rng()
+
+    if is_simulated_data:
+        grid = np.linspace(tau_range[0] + 1.0 / n_grid, tau_range[1], n_grid)
+
+        # Generate regressors
+        if regressor_type.lower() == "gbm":
+            x = np.exp(gp(grid, mean_vector, brownian_kernel, n_samples, rng))
+        else:  # GP
+            x = gp(grid, mean_vector, kernel_fn, n_samples, rng)
+
+        # Generate response
+        if model_type.lower() == "l2":
+            if beta_coef_true is None:
+                raise ValueError("Must provide a coefficient function.")
+
+            alpha0_true = 5.0
+            sigma2_true = 0.5
+
+            y = generate_l2_dataset(
+                x, grid, beta_coef_true, alpha0_true, sigma2_true, rng=rng
+            )
+        elif model_type.lower() == "rkhs":
+            beta_true, tau_true = beta_tau_true
+            alpha0_true = 5.0
+            sigma2_true = 0.5
+
+            y = generate_rkhs_dataset(
+                x, grid, beta_true, tau_true, alpha0_true, sigma2_true, rng=rng
+            )
+
+            if return_y_noiseless:
+                y_noiseless = generate_rkhs_dataset(
+                    x, grid, beta_true, tau_true, alpha0_true, 0.0, rng=rng
+                )
+
+        else:
+            raise ValueError("Invalid model generation strategy.")
+
+        # Create FData object
+        x_fd = FDataGrid(x, grid)
+
+    else:  # Real data
+        if model_type.lower() == "tecator":
+            x_fd, y = fetch_tecator(return_X_y=True)
+            data = x_fd.data_matrix[..., 0]
+            u, idx = np.unique(data, axis=0, return_index=True)  # Find repeated
+            x_fd = FDataGrid(data[idx], x_fd.grid_points[0])
+            y = y[idx, 1]  # Fat level
+        elif model_type.lower() == "moisture":
+            data = fetch_cran("Moisturespectrum", "fds")["Moisturespectrum"]
+            y = fetch_cran("Moisturevalues", "fds")["Moisturevalues"]
+            x_fd = FDataGrid(data["y"].T[:, ::7], data["x"][::7])
+        elif model_type.lower() == "sugar":
+            data = np.load("data/sugar.npz")
+            x_fd = FDataGrid(data["x"][:, ::5])
+            y = data["y"]
+        else:
+            raise ValueError("Real data set must be 'tecator', 'moisture' or 'sugar'.")
+
+        grid = normalize_grid(x_fd.grid_points[0], tau_range[0], tau_range[1])
+
+        x_fd = FDataGrid(x_fd.data_matrix, grid)
+
+    if return_y_noiseless:
+        return x_fd, y, grid, y_noiseless
+
+    return x_fd, y, grid
+
+
+def get_data_logistic(
+    is_simulated_data,
+    model_type,
+    n_samples=150,
+    n_grid=100,
+    kernel_fn=None,
+    beta_coef=None,
+    noise=0.05,
+    initial_smoothing=False,
+    tau_range=(0, 1),
+    kernel_fn2=None,
+    mean_vector2=None,
+    rng=None,
+):
+    if rng is None:
+        rng = np.random.default_rng()
+
+    if is_simulated_data:
+        grid = np.linspace(tau_range[0] + 1.0 / n_grid, tau_range[1], n_grid)
+        mean_vector = None
+        alpha0_true = -0.5
+
+        if model_type == "mixture":
+            X, y = simulation.generate_mixture_dataset(
+                grid,
+                mean_vector,
+                mean_vector2,
+                kernel_fn,
+                kernel_fn2,
+                n_samples,
+                noise,
+                rng,
+            )
+
+        else:  # Logistic model (RKHS or L2)
+            # Generate X
+            X = simulation.gp(grid, mean_vector, kernel_fn, n_samples, rng)
+
+            # Generate y
+            if model_type == "l2":
+                if beta_coef is None:
+                    raise ValueError("Must provide a coefficient function.")
+
+                y_lin = simulation.generate_l2_dataset(
+                    X, grid, beta_coef, alpha0_true, sigma2=0.0, rng=rng
+                )
+            elif model_type == "rkhs":
+                beta_true = [-5.0, 1.0, 10.0]
+                tau_true = [0.1, 0.4, 0.8]
+                y_lin = simulation.generate_rkhs_dataset(
+                    X, grid, beta_true, tau_true, alpha0_true, sigma2=0.0, rng=rng
+                )
+            else:
+                raise ValueError("Invalid model generation strategy.")
+
+            # Transform linear response for logistic model
+            y = probability_to_label(y_lin, random_noise=noise, rng=rng)
+
+        # Create FData object
+        X_fd = FDataGrid(X, grid)
+
+    else:  # Real data
+        if model_type == "medflies":
+            X_fd, y = fetch_medflies(return_X_y=True)
+        elif model_type == "growth":
+            X_fd, y = fetch_growth(return_X_y=True)
+        elif model_type == "phoneme":
+            X_fd, y = fetch_phoneme(return_X_y=True)
+            y_idx = np.where(y < 2)[0]  # Only 2 classes
+            rand_idx = rng.choice(y_idx, size=200)  # Choose 200 random curves
+            X_fd = FDataGrid(
+                X_fd.data_matrix[rand_idx, ::2, 0],  # Half the grid resolution
+                X_fd.grid_points[0][::2],
+            )
+            y = y[rand_idx]
+        else:
+            raise ValueError(
+                "Real data set must be 'medflies', " "'growth' or 'phoneme'."
+            )
+
+        grid = normalize_grid(X_fd.grid_points[0], tau_range[0], tau_range[1])
+
+        X_fd = FDataGrid(X_fd.data_matrix, grid)
+
+    # Smooth data
+    if initial_smoothing != "none":
+        if initial_smoothing == "nw":
+            smoother = NW()
+        else:
+            smoother = BasisSmoother(BSpline(n_basis=16))
+
+        smoothing_params = np.logspace(-4, 4, 50)
+
+        X_fd, _ = simulation.smooth_data(X_fd, smoother, smoothing_params)
+
+    return X_fd, y, grid
+
+
+def smooth_data(X, X_test, smoothing_params):
+    # Nadaraya-Watson kernel smoothing
+    nw = SmoothingParameterSearch(
+        KernelSmoother(kernel_estimator=NadarayaWatsonHatMatrix()),
+        smoothing_params,
+        param_name="kernel_estimator__bandwidth",
+        scoring=LinearSmootherGeneralizedCVScorer(akaike_information_criterion),
+        n_jobs=-1,
+    )
+    nw.fit(X)
+    X_nw = nw.transform(X)
+    X_test_nw = nw.transform(X_test)
+
+    return X_nw, X_test_nw

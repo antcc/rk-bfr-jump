@@ -1,3 +1,5 @@
+import warnings
+
 import arviz as az
 import matplotlib.pyplot as plt
 import numpy as np
@@ -150,6 +152,12 @@ def plot_trace(
     chain = chain.swapaxes(0, 1)  # for compatibility with arviz
 
     # Plot marginal posterior and trace
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            category=UserWarning,
+            message="Your data appears to have a single value or no finite values",
+        )
     ax = az.plot_trace(
         chain,
         combined=True,
