@@ -3,6 +3,7 @@ Classes that represent the priors of the RKHS model.
 """
 
 import numpy as np
+from numba import njit, prange
 from scipy.stats import norm, uniform
 
 
@@ -66,9 +67,20 @@ def uniform_dist(a, b):
 class RKHSPriorSimple:
     """The prior on p (the number of components) is assumed to be uniform in [1, n_leaves_max]"""
 
-    def __init__(self, theta_space, grid, sd_beta, transform_sigma=False):
+    def __init__(
+        self,
+        theta_space,
+        grid,
+        sd_beta,
+        lambda_p=None,
+        min_dist_tau=1,
+        transform_sigma=False,
+    ):
         # Indices in the coords array
         self.ts = theta_space
+
+        # Prior on p
+        self.lambda_p = lambda_p
 
         # Independent priors
         self.prior_beta = norm(0, sd_beta)
@@ -80,7 +92,16 @@ class RKHSPriorSimple:
         # Other information
         self.grid = grid
         self.sd_beta = sd_beta
+        self.min_dist_tau = min_dist_tau
         self.transform_sigma = transform_sigma
+
+    def logpmf_rate_p(self, p):
+        """Compute log(P(p)/P(p-1)) using the prior on p."""
+        if self.lambda_p is None:  # uniform distribution
+            return np.zeros_like(p)  # np.log(1)=0
+
+        # P(p) = \lambda^p/Cp!, with C a constant
+        return np.log(self.lambda_p / p)
 
     def logpdf_components(self, coords_components, inds_components=None):
         # Get current values of theta
@@ -112,6 +133,12 @@ class RKHSPriorSimple:
             ..., 0
         ]  # (ntemps, nwalkers)
 
+        # Do not allow very close values of tau on the same branch
+        idx_valid = check_valid_t(
+            self.ts.get_idx_tau_grid(tau), inds["components"], self.min_dist_tau
+        )
+        lp_tau[~idx_valid] = -np.inf
+
         # Turn off contribution of inactive leaves
         lp_beta[~inds["components"]] = 0.0
         lp_tau[~inds["components"]] = 0.0
@@ -133,3 +160,62 @@ class RKHSPriorSimple:
         out[..., self.ts.idx_tau] = self.prior_tau.rvs(size=size)
 
         return out
+
+
+@njit(cache=True, parallel=True, fastmath=True)
+def check_valid_t(t_grid, inds_t=None, min_dist=1):
+    ntemps, nwalkers, nleaves_max = t_grid.shape
+    valid = np.ones((ntemps, nwalkers), dtype=np.bool_)
+
+    # Need to create new variables so that numba is happy
+    if inds_t is None:
+        _inds_t = np.ones_like(t_grid, dtype=np.bool_)
+    else:
+        _inds_t = inds_t
+
+    for i in prange(ntemps):
+        for j in range(nwalkers):
+            t_ij = t_grid[i, j]
+            inds_t_ij = _inds_t[i, j]
+
+            for k in range(nleaves_max):
+                if not inds_t_ij[k]:
+                    continue
+
+                for k_next in range(nleaves_max):
+                    if (
+                        k_next != k
+                        and inds_t_ij[k_next]
+                        and np.abs(t_ij[k] - t_ij[k_next]) <= min_dist
+                    ):
+                        valid[i, j] = False
+                        break
+
+                if not valid[i, j]:
+                    break
+
+    return valid
+
+
+@njit(cache=True, parallel=True, fastmath=True)
+def generate_valid_t(size, grid, min_dist=1, shuffle=True):
+    M, K, N = size
+    n_grid = len(grid)
+    t = np.zeros((M, K, N))
+    max_range = n_grid // N
+
+    for m in range(M):
+        for k in range(K):
+            start = 0
+            for n in range(N):
+                end = (n + 1) * max_range
+                value = np.random.randint(start, end)
+                t[m, k, n] = grid[value]
+                start = value + min_dist + 1
+
+    if shuffle:
+        for m in prange(M):
+            for k in range(K):
+                np.random.shuffle(t[m, k])
+
+    return t

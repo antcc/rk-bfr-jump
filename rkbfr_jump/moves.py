@@ -92,8 +92,12 @@ class RJMoveRKHS(ReversibleJumpMove):
 
         Returns:
             inds_birth_array (np.ndarray), inds_death_array (np.ndarray):
-                    The indexing information is a 2D array with shape ``(number changing, 3)``.
-                    The length 3 is the index into each of the ``(ntemps, nwalkers, nleaves_max)``.
+                    The indexing information is a 2D array with shape ``(number changing, 4)``.
+                    The first 3 of the length 4 are the index into each of the ``(ntemps, nwalkers, nleaves_max).
+                    The last position is the number of active components for the prior ratio in the acceptance rate
+                    computation (k+1). For deaths, k+1 is already the current state, while for births, k+1 is the
+                    new state (having added one component).
+                    ``.
 
         """
         np.random.seed(seed)
@@ -109,8 +113,8 @@ class RJMoveRKHS(ReversibleJumpMove):
         # setup storage for this information
         num_increases = np.sum(change == +1)
         num_decreases = np.sum(change == -1)
-        inds_birth_array = np.zeros((num_increases, 3), dtype=np.int64)
-        inds_death_array = np.zeros((num_decreases, 3), dtype=np.int64)
+        inds_birth_array = np.zeros((num_increases, 4), dtype=np.int64)
+        inds_death_array = np.zeros((num_decreases, 4), dtype=np.int64)
 
         increase_i = 0
         decrease_i = 0
@@ -129,7 +133,7 @@ class RJMoveRKHS(ReversibleJumpMove):
                     ind_change = np.random.choice(inds_false)
                     # put in the indexes into inds arrays
                     inds_birth_array[increase_i] = np.array(
-                        [t, w, ind_change], dtype=np.int64
+                        [t, w, ind_change, np.sum(inds_tw) + 1], dtype=np.int64
                     )
                     # count increases
                     increase_i += 1
@@ -142,7 +146,7 @@ class RJMoveRKHS(ReversibleJumpMove):
                     ind_change = np.random.choice(inds_true)
                     # add indexes into inds
                     inds_death_array[decrease_i] = np.array(
-                        [t, w, ind_change], dtype=np.int64
+                        [t, w, ind_change, np.sum(inds_tw)], dtype=np.int64
                     )
                     decrease_i += 1
                     # do not care currently about what we do with discarded coords, they just sit in the state
@@ -215,16 +219,16 @@ class RJMoveRKHS(ReversibleJumpMove):
         )
 
         # adjust deaths from True -> False
-        inds_death = tuple(inds_death_array.T)  # multi-index for numpy arrays
+        inds_death = tuple(inds_death_array[:, :-1].T)  # multi-index for numpy arrays
         new_inds["components"][inds_death] = False
 
         # factor is +log q()
         factors[inds_death[:2]] += +1 * self.priors.logpdf_components(
             q["components"][inds_death]
-        )
+        ) - self.priors.logpmf_rate_p(inds_death_array[:, -1])
 
         # adjust births from False -> True
-        inds_birth = tuple(inds_birth_array.T)  # multi-index for numpy arrays
+        inds_birth = tuple(inds_birth_array[:, :-1].T)  # multi-index for numpy arrays
         new_inds["components"][inds_birth] = True
 
         # add coordinates for new leaves
@@ -234,7 +238,7 @@ class RJMoveRKHS(ReversibleJumpMove):
         # factor is -log q()
         factors[inds_birth[:2]] += -1 * self.priors.logpdf_components(
             q["components"][inds_birth]
-        )
+        ) + self.priors.logpmf_rate_p(inds_birth_array[:, -1])
 
         return q, new_inds, factors
 
@@ -520,7 +524,11 @@ class MTRJMoveRKHS(MultipleTryMove, RJMoveRKHS):
             seed,
         )
 
-        all_inds_for_change = {"+1": inds_birth_array, "-1": inds_death_array}
+        # Ignore the last column (it has to do with factors for different priors in the simple RJ move)
+        all_inds_for_change = {
+            "+1": inds_birth_array[:, :-1],
+            "-1": inds_death_array[:, :-1],
+        }
 
         # preparing leaf information for going into the proposal
         inds_leaves_rj = np.zeros(ntemps * nwalkers, dtype=int)
