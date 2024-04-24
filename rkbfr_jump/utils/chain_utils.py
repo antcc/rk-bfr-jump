@@ -2,14 +2,21 @@
 # Helper functions to post-process the sampler chains
 ###
 
+try:
+    from IPython.display import display
+except ImportError:
+    display = print
+
 import warnings
 from copy import deepcopy
 
 import numpy as np
+import pandas as pd
 from scipy.spatial.distance import pdist
-from scipy.stats import norm
+from scipy.stats import invgamma, norm
 
 from ..parameters import LogSqrtTransform
+from ..prior import check_valid_t, generate_valid_t
 
 
 def get_full_chain_at_T(
@@ -121,3 +128,110 @@ def get_flat_chain_components(coords, theta_space, ndim):
     samples_flat[:, theta_space.idx_tau] = coords_T_tau[valid_idx]
 
     return samples_flat
+
+
+def fix_all_false_inds(inds):
+    idx_all_false = np.where(
+        np.sum(inds, axis=-1) == 0
+    )  # Find branches with 0 active components
+    inds[*idx_all_false, 0] = True  # Set the first component to True
+
+
+def sample_initial_values(
+    coords, theta_space, prior, y_std_orig, y_scaled_mean, y_mean_abs, seed=None
+):
+    if seed is not None:
+        np.random.seed(seed)
+
+    size_components = coords["components"].shape[:-1]
+
+    # sample initial values for components values (b) from prior
+    coords["components"][..., theta_space.idx_beta] = prior.container["components"].rvs(
+        size=size_components, keys=[theta_space.idx_beta]
+    )[..., theta_space.idx_beta]
+
+    # uniform initial values for component times (t), but constricted to be different
+    coords["components"][..., theta_space.idx_tau] = generate_valid_t(
+        size_components, theta_space.grid, prior.min_dist_tau, shuffle=True, seed=seed
+    )
+    assert np.all(
+        check_valid_t(
+            theta_space.get_idx_tau_grid(
+                coords["components"][..., theta_space.idx_tau]
+            ),
+            min_dist=prior.min_dist_tau,
+        )
+    )
+
+    # sample initial values for alpha0 from normal distribution
+    coords["common"][:, :, 0, theta_space.idx_alpha0] = norm(
+        0, 10 * np.abs(y_scaled_mean)
+    ).rvs(size=size_components[:2])
+
+    # sample initial values for sigma2 from inverse-gamma distribution
+    sigma2_initial_values = invgamma(2, scale=y_mean_abs / (100 * y_std_orig**2)).rvs(
+        size=size_components[:2]
+    )
+    coords["common"][:, :, 0, theta_space.idx_sigma2] = (
+        LogSqrtTransform.forward(sigma2_initial_values)
+        if theta_space.transform_sigma
+        else sigma2_initial_values
+    )
+
+
+def print_sampling_information(
+    full_chain_components,
+    full_chain_common,
+    theta_space,
+    ensemble,
+    idx_order,
+    thin_by,
+    display_notebook=False,
+):
+    components_last = full_chain_components[-1, 0, :]  # last sample of first walker
+    common_last = full_chain_common[-1, 0, :]  # last sample of first walker
+    print("* Last sample (T=0, W=0):")
+    df_components = pd.DataFrame(
+        {
+            "$b$": components_last[:, theta_space.idx_beta],
+            "$t$": components_last[:, theta_space.idx_tau],
+        }
+    )
+    df_common = pd.DataFrame(
+        {
+            "$\\alpha_0$": [common_last[theta_space.idx_alpha0]],
+            "$\\sigma^2$": [common_last[theta_space.idx_sigma2]],
+        }
+    )
+    if display_notebook:
+        display(df_components)
+        display(df_common.style.hide(axis="index"))
+    else:
+        print(df_components)
+        print(df_common)
+
+    print("\n* Acceptance % (T=0)")
+    print(
+        f"[{ensemble.moves[0].moves[0].__class__.__name__}]",
+        100 * ensemble.moves[0].acceptance_fraction_separate[0][0],
+    )
+    print(
+        f"[{ensemble.moves[0].moves[1].__class__.__name__}]",
+        100 * ensemble.moves[0].acceptance_fraction_separate[1][0],
+    )
+    print(
+        f"[{ensemble.rj_moves[0].__class__.__name__}]",
+        100 * ensemble.rj_acceptance_fraction[0],
+    )
+    print("\n* Temperature swaps accepted %:", 100 * ensemble.swap_acceptance_fraction)
+    print("\n* Last values of a (parameter of the in-model moves):")
+    print(f"[GroupMoveRKHS] a={ensemble.moves[0].moves[0].a:.2f}")
+    print(f"[StretchMove] a={ensemble.moves[0].moves[1].a:.2f}")
+
+    if full_chain_components.shape[2] > 1:
+        print(
+            f"\n* Chain ordered by: {'beta' if idx_order == theta_space.idx_beta else 'tau'}"
+        )
+
+    print("\n* ", end="")
+    _ = ensemble.backend.get_gelman_rubin_convergence_diagnostic(thin=thin_by)

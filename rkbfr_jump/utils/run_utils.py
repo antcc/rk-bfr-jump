@@ -29,6 +29,18 @@ from .sklearn_utils import Basis, DataMatrix, FeatureSelector, PLSRegressionWrap
 from .utility import IgnoreWarnings
 
 
+def fill_df_scores(df, y_true, y_pred, name, features, noise):
+    rmse = root_mean_squared_error(y_true, y_pred)
+
+    df.loc[len(df)] = [
+        name,
+        features,
+        noise,
+        rmse,
+        rmse / np.std(y_true),
+    ]
+
+
 def cv_sk(
     estimators,
     X,

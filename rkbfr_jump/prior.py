@@ -3,6 +3,7 @@ Classes that represent the priors of the RKHS model.
 """
 
 import numpy as np
+from eryn.prior import ProbDistContainer
 from numba import njit, prange
 from scipy.stats import norm, uniform
 
@@ -94,6 +95,24 @@ class RKHSPriorSimple:
         self.sd_beta = sd_beta
         self.min_dist_tau = min_dist_tau
         self.transform_sigma = transform_sigma
+
+        # Eryn-compatible prior container (would not be possible if our prior was more complex)
+        self.container = {
+            "components": ProbDistContainer(
+                {
+                    theta_space.idx_beta: self.prior_beta,
+                    theta_space.idx_tau: self.prior_tau,
+                }
+            ),
+            "common": ProbDistContainer(
+                {
+                    (
+                        theta_space.idx_alpha0,
+                        theta_space.idx_sigma2,
+                    ): self.prior_alpha0_sigma2,
+                }
+            ),
+        }
 
     def logpmf_rate_p(self, p):
         """Compute log(P(p)/P(p-1)) using the prior on p."""
@@ -198,13 +217,17 @@ def check_valid_t(t_grid, inds_t=None, min_dist=1):
 
 
 @njit(cache=True, parallel=True, fastmath=True)
-def generate_valid_t(size, grid, min_dist=1, shuffle=True):
+def generate_valid_t(size, grid, min_dist=1, shuffle=True, seed=None):
+    if seed is None:
+        seed = 0
+
     M, K, N = size
     n_grid = len(grid)
     t = np.zeros((M, K, N))
     max_range = n_grid // N
 
-    for m in range(M):
+    for m in prange(M):
+        np.random.seed(seed + m)
         for k in range(K):
             start = 0
             for n in range(N):
@@ -215,6 +238,7 @@ def generate_valid_t(size, grid, min_dist=1, shuffle=True):
 
     if shuffle:
         for m in prange(M):
+            np.random.seed(seed + m)
             for k in range(K):
                 np.random.shuffle(t[m, k])
 
