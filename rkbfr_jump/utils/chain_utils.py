@@ -10,8 +10,10 @@ except ImportError:
 import warnings
 from copy import deepcopy
 
+import arviz as az
 import numpy as np
 import pandas as pd
+import xarray as xr
 from scipy.spatial.distance import pdist
 from scipy.stats import invgamma, norm
 
@@ -235,3 +237,27 @@ def print_sampling_information(
 
     print("\n* ", end="")
     _ = ensemble.backend.get_gelman_rubin_convergence_diagnostic(thin=thin_by)
+
+
+def pp_to_arviz_idata(pp, y_obs):
+    """Convert posterior predictive arrays to InferenceData."""
+    coords = {
+        "draw": np.arange(pp.shape[0]),
+        "chain": np.arange(pp.shape[1]),
+        "prediction": np.arange(pp.shape[2]),
+    }
+    data_vars = {"y_star": (("draw", "chain", "prediction"), pp)}
+
+    idata_pp = az.convert_to_inference_data(
+        xr.Dataset(data_vars=data_vars, coords=coords),
+        group="posterior_predictive",
+    )
+
+    idata_obs = az.convert_to_inference_data(
+        xr.Dataset(data_vars={"y_obs": ("observation", y_obs)}, coords=coords),
+        group="observed_data",
+    )
+
+    az.concat(idata_pp, idata_obs, inplace=True)
+
+    return idata_pp

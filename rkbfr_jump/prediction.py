@@ -4,7 +4,7 @@ from .utils.utility import IgnoreWarnings
 
 
 def predict_pp(
-    chain_components, chain_common, theta_space, X_test, aggregate_pp, noise=False
+    chain_components, chain_common, theta_space, X_test, aggregate_pp=None, noise=False
 ):
     # Replace NaN with 0.0 to "turn off" the corresponding coefficients of beta
     chain_components = np.nan_to_num(chain_components, nan=0.0)
@@ -30,12 +30,16 @@ def predict_pp(
         y_pred_all += np.sqrt(sigma2) * np.random.standard_normal(y_pred_all.shape)
 
     # Summary of pp
-    y_pred_all = y_pred_all.reshape(
-        -1, len(X_test)
-    )  # bring together all (nsteps, nwalkers)
-    y_pred_aggregate = aggregate_pp(y_pred_all, axis=0)
 
-    return y_pred_aggregate
+    if aggregate_pp is not None:
+        y_pred_all = aggregate_pp(
+            y_pred_all.reshape(
+                -1, len(X_test)
+            ),  # bring together all (nsteps, nwalkers)
+            axis=0,
+        )
+
+    return y_pred_all
 
 
 def predict_weighted(

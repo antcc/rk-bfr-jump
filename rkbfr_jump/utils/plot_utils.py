@@ -7,6 +7,9 @@ from arviz.labels import MapLabeller
 from matplotlib.ticker import MaxNLocator
 from scipy.stats import mode as mode_discrete
 
+from ..prediction import predict_pp
+from .chain_utils import pp_to_arviz_idata
+
 
 def plot_dataset_regression(
     X, y, grid, plot_means=True, n_samples=None, figsize=(9, 4)
@@ -234,7 +237,7 @@ def plot_trace_p(nleaves, nleaves_max, color="red", p_true=None):
         axs[0, 0].legend(fontsize=9)
 
 
-def plot_tempered_p(ntemps, nleaves_all_T, nleaves_max, colors):
+def plot_tempered_posterior_p(ntemps, nleaves_all_T, nleaves_max, colors):
     fig, ax = plt.subplots(1, ntemps, figsize=(4 * ntemps, 3))
     bins = np.arange(1, nleaves_max + 2) - 0.5
 
@@ -493,3 +496,31 @@ def plot_prediction_results(
     )
 
     return fig
+
+
+def plot_ppc(
+    chain_components,
+    chain_common,
+    theta_space,
+    X,
+    y,
+    is_test_data,
+    num_pp_samples=500,
+    figsize=(6, 4),
+):
+    pp = predict_pp(chain_components, chain_common, theta_space, X, noise=True)
+    idata_pp_train = pp_to_arviz_idata(pp, y)
+
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.set_title(
+        f"Posterior predictive distribution for {'X_test' if is_test_data else 'X'}",
+    )
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=FutureWarning)
+        az.plot_ppc(
+            idata_pp_train,
+            data_pairs={"y_obs": "y_star"},
+            num_pp_samples=num_pp_samples,
+            ax=ax,
+        )

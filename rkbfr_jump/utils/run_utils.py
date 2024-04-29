@@ -1,7 +1,9 @@
 import sys
+from itertools import product
 
 import numpy as np
 import pandas as pd
+from scipy.stats import mode as mode_discrete
 from skfda.ml.classification import KNeighborsClassifier, MaximumDepthClassifier
 from skfda.ml.classification import LogisticRegression as FLR
 from skfda.ml.classification import NearestCentroid as FNC
@@ -25,6 +27,7 @@ sys.path.append("../../")  # To import from the local module "reference_methods"
 from reference_methods._flda import FLDA
 from reference_methods._fpls import APLS, FPLS
 
+from .. import prediction
 from .sklearn_utils import Basis, DataMatrix, FeatureSelector, PLSRegressionWrapper
 from .utility import IgnoreWarnings
 
@@ -611,3 +614,174 @@ def get_reference_models_logistic(X, y, seed):
     )
 
     return classifiers
+
+
+def compute_eryn_predictions(
+    chain_components,
+    chain_common,
+    nleaves,
+    theta_space,
+    X_test,
+    y_test,
+    X_train,
+    y_train,
+    summary_statistics,
+    column_names,
+    cv_folds,
+    sort_by=-1,
+    include_summary_methods=True,
+    seed=None,
+):
+    if seed is not None:
+        np.random.seed(seed)
+
+    max_used_p = np.max(np.unique(nleaves))
+
+    noises = [True, False]
+    df = pd.DataFrame(columns=column_names)
+
+    # Method 1 (PP)
+    names_pp = ["pp_mean", "pp_tmean", "pp_median", "pp_mode"]
+    for noise, (name, aggregate_pp) in product(
+        noises, zip(names_pp, summary_statistics)
+    ):
+        Y_pred = prediction.predict_pp(
+            chain_components,
+            chain_common,
+            theta_space,
+            X_test,
+            aggregate_pp,
+            noise=noise,
+        )
+
+        fill_df_scores(df, y_test, Y_pred, name, max_used_p, noise)
+
+    # Method 2 (Weighted PP)
+    names_w_pp = ["w_pp_mean", "w_pp_tmean", "w_pp_median", "w_pp_mode"]
+    for noise, (name, aggregate_pp) in product(
+        noises, zip(names_w_pp, summary_statistics)
+    ):
+        Y_pred = prediction.predict_weighted_pp(
+            chain_components,
+            chain_common,
+            nleaves,
+            theta_space,
+            X_test,
+            aggregate_pp,
+            noise=noise,
+        )
+
+        fill_df_scores(df, y_test, Y_pred, name, max_used_p, noise)
+
+    # Method 3 (MAP PP)
+    names_map_pp = ["map_pp_mean", "map_pp_tmean", "map_pp_median", "map_pp_mode"]
+    map_p = mode_discrete(nleaves, axis=None).mode
+
+    for noise, (name, aggregate_pp) in product(
+        noises, zip(names_map_pp, summary_statistics)
+    ):
+        Y_pred = prediction.predict_map_pp(
+            chain_components,
+            chain_common,
+            nleaves,
+            map_p,
+            theta_space,
+            X_test,
+            aggregate_pp,
+            noise=noise,
+        )
+
+        fill_df_scores(df, y_test, Y_pred, name, map_p, noise)
+
+    if include_summary_methods:
+        # Method 4 (Weighted summary)
+        names_summary = ["mean", "tmean", "median", "mode"]
+        for name, summary_statistic in zip(names_summary, summary_statistics):
+            Y_pred = prediction.predict_weighted_summary(
+                chain_components,
+                chain_common,
+                nleaves,
+                theta_space,
+                X_test,
+                summary_statistic,
+            )
+
+            fill_df_scores(df, y_test, Y_pred, "w_summary_" + name, max_used_p, "N/A")
+
+        # Method 5 (MAP summary)
+        for name, summary_statistic in zip(names_summary, summary_statistics):
+            Y_pred = prediction.predict_map_summary(
+                chain_components,
+                chain_common,
+                nleaves,
+                map_p,
+                theta_space,
+                X_test,
+                summary_statistic,
+            )
+
+            fill_df_scores(df, y_test, Y_pred, "map_summary_" + name, map_p, "N/A")
+
+    # Method 6 (Weighted variable selection)
+    names_vs = ["mean", "tmean", "median", "mode"]
+    params_regularizer = {"reg__alpha": np.logspace(-4, 4, 20)}
+    regs = [
+        (
+            "ridge",
+            GridSearchCV(
+                Pipeline([("reg", Ridge(random_state=seed))]),
+                params_regularizer,
+                scoring="neg_mean_squared_error",
+                n_jobs=-1,
+                cv=cv_folds,
+            ),
+        )
+    ]
+    for (summary_name, summary_statistic), (reg_name, reg) in product(
+        zip(names_vs, summary_statistics), regs
+    ):
+        Y_pred = prediction.predict_weighted_variable_selection(
+            chain_components,
+            chain_common,
+            nleaves,
+            theta_space,
+            X_train,
+            y_train,
+            X_test,
+            summary_statistic,
+            reg,
+        )
+
+        fill_df_scores(
+            df,
+            y_test,
+            Y_pred,
+            "w_vs_" + summary_name + "+" + reg_name,
+            max_used_p,
+            "N/A",
+        )
+
+    # Method 7 (MAP variable selection)
+    for (summary_name, summary_statistic), (reg_name, reg) in product(
+        zip(names_vs, summary_statistics), regs
+    ):
+        Y_pred = prediction.predict_map_variable_selection(
+            chain_components,
+            chain_common,
+            nleaves,
+            map_p,
+            theta_space,
+            X_train,
+            y_train,
+            X_test,
+            summary_statistic,
+            reg,
+        )
+
+        fill_df_scores(
+            df, y_test, Y_pred, "map_vs_" + summary_name + "+" + reg_name, map_p, "N/A"
+        )
+
+    df.sort_values(df.columns[sort_by], inplace=True)
+
+    return df
