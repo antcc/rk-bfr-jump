@@ -9,14 +9,12 @@ from scipy.spatial.distance import cdist
 from .parameters import LogSqrtTransform
 
 
-class RKHSLikelihood:
-    def __init__(self, theta_space, grid, X, y, transform_sigma=False):
+class RKHSLikelihoodLinear:
+    def __init__(self, theta_space, X, y):
         self.ts = theta_space
-        self.grid = grid
         self.X_T = np.ascontiguousarray(X.T)
         self.y = y
         self.n = X.shape[0]
-        self.transform_sigma = transform_sigma
 
     # METHOD 1: Sequential computation for future parallelization with pool argument in Eryn
     def evaluate_sequential(self, theta):
@@ -43,7 +41,7 @@ class RKHSLikelihood:
         tau = np.ascontiguousarray(theta_components[:, self.ts.idx_tau])
         alpha0 = theta_common[0][self.ts.idx_alpha0]
 
-        if self.transform_sigma:
+        if self.ts.transform_sigma:
             log_sigma = theta_common[0][self.ts.idx_sigma2]
             sigma2 = LogSqrtTransform.backward(log_sigma)
         else:
@@ -51,9 +49,9 @@ class RKHSLikelihood:
             log_sigma = LogSqrtTransform.forward(sigma2)
 
         # Compute the indices of the grid corresponding to the parameter tau
-        idx_tau_grid = cdist(tau[:, None], self.grid[:, None], "cityblock").argmin(
+        idx_tau_grid = cdist(tau[:, None], self.ts.grid[:, None], "cityblock").argmin(
             axis=-1
-        )  # == np.abs(self.grid - tau[:, None]).argmin(axis=-1)
+        )  # == np.abs(self.ts.grid - tau[:, None]).argmin(axis=-1)
 
         diff = self.y - alpha0 - self.X_T[idx_tau_grid].T @ beta
         ll = -self.n * log_sigma - 0.5 * (diff @ diff) / sigma2
@@ -108,16 +106,16 @@ class RKHSLikelihood:
         )  # get tau as a column
         alpha0 = np.ascontiguousarray(theta_common[:, self.ts.idx_alpha0])
 
-        if self.transform_sigma:
+        if self.ts.transform_sigma:
             log_sigma = np.ascontiguousarray(theta_common[:, self.ts.idx_sigma2])
             sigma2 = LogSqrtTransform.backward(log_sigma)
         else:
             sigma2 = np.ascontiguousarray(theta_common[:, self.ts.idx_sigma2])
             log_sigma = LogSqrtTransform.forward(sigma2)
 
-        idx_tau_grid = cdist(tau[:, None], self.grid[:, None], "cityblock").argmin(
+        idx_tau_grid = cdist(tau[:, None], self.ts.grid[:, None], "cityblock").argmin(
             axis=-1
-        )  # == np.abs(self.grid - tau[:, None]).argmin(axis=-1)
+        )  # == np.abs(self.ts.grid - tau[:, None]).argmin(axis=-1)
 
         ll = self._compute_ll_parallel(
             groups_components,

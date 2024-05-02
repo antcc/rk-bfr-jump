@@ -4,6 +4,8 @@ from itertools import product
 import numpy as np
 import pandas as pd
 from scipy.stats import mode as mode_discrete
+from skfda.misc.operators import LinearDifferentialOperator
+from skfda.misc.regularization import L2Regularization
 from skfda.ml.classification import KNeighborsClassifier, MaximumDepthClassifier
 from skfda.ml.classification import LogisticRegression as FLR
 from skfda.ml.classification import NearestCentroid as FNC
@@ -54,6 +56,7 @@ def cv_sk(
     kind="linear",
     n_jobs=1,
     df=None,
+    column_names=None,
     sort_by=-2,
     verbose=False,
 ):
@@ -103,11 +106,11 @@ def cv_sk(
 
         if kind == "linear":
             df = linear_regression_metrics(
-                y_test, y_pred, n_features, name, df, sort_by
+                y_test, y_pred, n_features, name, df, column_names, sort_by
             )
         else:
             df = logistic_regression_metrics(
-                y_test, y_pred, n_features, name, df, sort_by
+                y_test, y_pred, n_features, name, df, column_names, sort_by
             )
 
     return df, est_cv
@@ -119,11 +122,13 @@ def linear_regression_metrics(
     n_features,
     predictor_name,
     df=None,
+    column_names=None,
     sort_by=-2,
 ):
     if df is None:
-        results_columns = ["Estimator", "Features", "RMSE", "rRMSE"]
-        df = pd.DataFrame(columns=results_columns)
+        if column_names is None:
+            column_names = ["Estimator", "Features", "RMSE", "rRMSE"]
+        df = pd.DataFrame(columns=column_names)
 
     # r2 = r2_score(y_true, y_pred)
     rmse = root_mean_squared_error(y_true, y_pred)
@@ -147,11 +152,13 @@ def logistic_regression_metrics(
     n_features,
     predictor_name,
     df=None,
+    column_names=None,
     sort_by=-1,
 ):
     if df is None:
-        results_columns = ["Estimator", "Features", "Acc"]
-        df = pd.DataFrame(columns=results_columns)
+        if column_names is None:
+            column_names = ["Estimator", "Features", "Acc"]
+        df = pd.DataFrame(columns=column_names)
 
     acc = accuracy_score(y_true, y_pred)
     df.loc[len(df)] = [predictor_name, n_features, acc]
@@ -159,6 +166,35 @@ def logistic_regression_metrics(
     df.sort_values(df.columns[sort_by], inplace=True, ascending=False)
 
     return df
+
+
+def get_reference_models_linear(max_n_components, seed):
+    alphas = np.logspace(-4, 4, 20)
+    n_components = np.arange(max_n_components) + 1
+    n_basis_bsplines = n_components[
+        n_components >= 4
+    ]  # Cubic splines, so n_basis must be >= 4
+    n_basis_fourier = n_components[n_components % 2 != 0]
+
+    basis_bspline = [BSplineBasis(n_basis=p) for p in n_basis_bsplines]
+    basis_fourier = [FourierBasis(n_basis=p) for p in n_basis_fourier]
+
+    params_regularizer = {"reg__alpha": alphas}
+    params_select = {"selector__p": n_components}
+    params_pls = {"reg__n_components": n_components}
+    params_dim_red = {"dim_red__n_components": n_components}
+    params_basis = {"basis__basis": basis_bspline + basis_fourier}
+
+    regressors = linear_regression_comparison_suite(
+        params_regularizer,
+        params_select,
+        params_dim_red,
+        params_basis,
+        params_pls,
+        random_state=seed,
+    )
+
+    return regressors
 
 
 def linear_regression_comparison_suite(
@@ -184,15 +220,6 @@ def linear_regression_comparison_suite(
         )
     )
 
-    # Ridge
-    regressors.append(
-        (
-            "ridge",
-            Pipeline([("data_matrix", DataMatrix()), ("reg", Ridge())]),
-            params_regularizer,
-        )
-    )
-
     # PLS1 regression
     regressors.append(
         (
@@ -214,7 +241,7 @@ def linear_regression_comparison_suite(
                 [
                     ("data_matrix", DataMatrix()),
                     ("selector", FeatureSelector()),
-                    ("reg", Ridge()),
+                    ("reg", Ridge(random_state=random_state)),
                 ]
             ),
             {**params_regularizer, **params_select},
@@ -228,26 +255,27 @@ def linear_regression_comparison_suite(
             Pipeline(
                 [
                     ("dim_red", FPCA(n_components=3)),  # Retains scores only
-                    ("reg", Ridge()),
+                    ("reg", Ridge(random_state=random_state)),
                 ]
             ),
             {**params_dim_red, **params_regularizer},
         )
     )
 
-    """
-    TARDA DEMASIADO (búsqueda en CV demasiado grande?)
-
     # FPLS (fixed basis)+Ridge
-    regressors.append(("fpls_basis+ridge",
-                       Pipeline([
-                           ("basis", Basis()),
-                           ("dim_red", FPLS()),
-                           ("reg", Ridge())]),
-                       {**params_basis, **params_dim_red, **params_regularizer}
-                       ))
-
-    """
+    regressors.append(
+        (
+            "fpls+ridge",
+            Pipeline(
+                [
+                    ("basis", Basis()),
+                    ("dim_red", FPLS()),
+                    ("reg", Ridge(random_state=random_state)),
+                ]
+            ),
+            {**params_basis, **params_dim_red, **params_regularizer},
+        )
+    )
 
     # PCA+Ridge
     regressors.append(
@@ -257,7 +285,7 @@ def linear_regression_comparison_suite(
                 [
                     ("data_matrix", DataMatrix()),
                     ("dim_red", PCA(random_state=random_state)),
-                    ("reg", Ridge()),
+                    ("reg", Ridge(random_state=random_state)),
                 ]
             ),
             {**params_dim_red, **params_regularizer},
@@ -272,20 +300,12 @@ def linear_regression_comparison_suite(
                 [
                     ("data_matrix", DataMatrix()),
                     ("dim_red", PLSRegressionWrapper()),
-                    ("reg", Ridge()),
+                    ("reg", Ridge(random_state=random_state)),
                 ]
             ),
             {**params_dim_red, **params_regularizer},
         )
     )
-
-    # RMH+Ridge
-    """regressors.append(("rmh+ridge",
-                       Pipeline([
-                           ("var_sel", RMH()),
-                           ("reg", Ridge())]),
-                       params_regularizer
-                       ))"""
 
     """
     FUNCTIONAL MODELS
@@ -301,34 +321,15 @@ def linear_regression_comparison_suite(
     regressors.append(
         (
             "flin",
-            Pipeline([("basis", Basis()), ("reg", FLinearRegression())]),
+            Pipeline(
+                [
+                    ("basis", Basis()),
+                    ("reg", FLinearRegression()),
+                ]
+            ),
             params_basis,
         )
     )
-
-    """
-    TARDA BASTANTE (cálculo de Gram matrix costoso en la base)
-
-    # FPCA basis + Functional Linear Regression
-    regressors.append(("flin_khl",
-                       Pipeline([
-                           ("basis", FPCABasis()),
-                           ("reg", FLinearRegression())]),
-                       params_basis_fpca
-                       ))
-    """
-
-    """
-    TARDA BASTANTE (cálculo de Gram matrix costoso en la base)
-
-    # FPLS basis + Functional Linear Regression
-    regressors.append(("flin_fpls",
-                       Pipeline([
-                           ("basis", Basis()),
-                           ("reg", FLinearRegression())]),
-                       params_basis_fpls
-                       ))
-    """
 
     # Fixed basis + FPLS1 regression
     regressors.append(
@@ -554,32 +555,6 @@ def logistic_regression_comparison_suite(
     return classifiers
 
 
-def get_reference_models_linear(seed):
-    alphas = np.logspace(-4, 4, 20)
-    n_components = [1, 2, 3, 4, 5, 7, 10, 15, 20, 50]
-    n_basis_bsplines = [6, 8, 10, 12, 14]
-    n_basis_fourier = [5, 7, 9, 11, 13]
-
-    basis_bspline = [BSplineBasis(n_basis=p) for p in n_basis_bsplines]
-    basis_fourier = [FourierBasis(n_basis=p) for p in n_basis_fourier]
-    params_regularizer = {"reg__alpha": alphas}
-    params_select = {"selector__p": n_components}
-    params_pls = {"reg__n_components": n_components}
-    params_dim_red = {"dim_red__n_components": n_components}
-    params_basis = {"basis__basis": basis_bspline + basis_fourier}
-
-    regressors = linear_regression_comparison_suite(
-        params_regularizer,
-        params_select,
-        params_dim_red,
-        params_basis,
-        params_pls,
-        random_state=seed,
-    )
-
-    return regressors
-
-
 def get_reference_models_logistic(X, y, seed):
     Cs = np.logspace(-4, 4, 20)
     n_selected = [5, 10, 15, 20, 25, 50]
@@ -616,7 +591,7 @@ def get_reference_models_logistic(X, y, seed):
     return classifiers
 
 
-def compute_eryn_predictions(
+def compute_eryn_linear_predictions(
     chain_components,
     chain_common,
     nleaves,
@@ -630,6 +605,7 @@ def compute_eryn_predictions(
     cv_folds,
     sort_by=-1,
     include_summary_methods=True,
+    noise="both",  # True, False or 'both'
     seed=None,
 ):
     if seed is not None:
@@ -637,7 +613,10 @@ def compute_eryn_predictions(
 
     max_used_p = np.max(np.unique(nleaves))
 
-    noises = [True, False]
+    if noise == "both":
+        noises = [True, False]
+    else:
+        noises = [noise]
     df = pd.DataFrame(columns=column_names)
 
     # Method 1 (PP)

@@ -65,17 +65,15 @@ def uniform_dist(a, b):
     return uniform(loc=a, scale=b - a)
 
 
-class RKHSPriorSimple:
-    """The prior on p (the number of components) is assumed to be uniform in [1, n_leaves_max]"""
+class RKHSPriorLinear:
+    """Simple prior where all parameters are independent"""
 
     def __init__(
         self,
         theta_space,
-        grid,
         sd_beta,
         lambda_p=None,
         min_dist_tau=1,
-        transform_sigma=False,
     ):
         # Indices in the coords array
         self.ts = theta_space
@@ -85,16 +83,14 @@ class RKHSPriorSimple:
 
         # Independent priors
         self.prior_beta = norm(0, sd_beta)
-        self.prior_tau = uniform_dist(grid.min(), grid.max())
+        self.prior_tau = uniform_dist(self.ts.grid.min(), self.ts.grid.max())
         self.prior_alpha0_sigma2 = (
-            flat_prior() if transform_sigma else jeffreys_prior(theta_space)
+            flat_prior() if self.ts.transform_sigma else jeffreys_prior(theta_space)
         )
 
         # Other information
-        self.grid = grid
         self.sd_beta = sd_beta
         self.min_dist_tau = min_dist_tau
-        self.transform_sigma = transform_sigma
 
         # Eryn-compatible prior container (would not be possible if our prior was more complex)
         self.container = {
@@ -156,7 +152,7 @@ class RKHSPriorSimple:
         idx_valid = check_valid_t(
             self.ts.get_idx_tau_grid(tau), inds["components"], self.min_dist_tau
         )
-        lp_tau[~idx_valid] = -np.inf
+        lp_tau[~idx_valid] = -1e300  # -np.inf fails for MT computations
 
         # Turn off contribution of inactive leaves
         lp_beta[~inds["components"]] = 0.0

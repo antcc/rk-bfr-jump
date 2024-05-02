@@ -262,10 +262,11 @@ def triangular_plot_components(
     var_name,
     cmap,
     color_p="red",
-    figsize=(7, 7),
+    figsize=(10, 7),
 ):
     fig = plt.figure(figsize=figsize)
     fig.suptitle(f"Posterior distribution of {var_name}", fontweight="semibold")
+
     # Get effective range of p
     min_p, max_p = np.min(nleaves), np.max(nleaves)
 
@@ -301,7 +302,12 @@ def triangular_plot_components(
                     )
                 except UserWarning as e:
                     if message in str(e):
-                        fig.delaxes(ax_plot)
+                        # fig.delaxes(ax_plot)
+                        ax_plot.axvline(
+                            chain_components_p[0, j, idx_samples],
+                            color=colors[j],
+                            linewidth=1,
+                        )
 
             ax_plot.set_yticklabels([])
             ax_plot.tick_params(axis="x", labelsize=8)
@@ -327,7 +333,7 @@ def triangular_plot_components(
                 )
 
 
-def triangular_plot_common(
+def posterior_plot_common(
     chain_common, nleaves, idx_samples, colors, color_p="red", figsize=(7, 7)
 ):
     fig = plt.figure(figsize=figsize)
@@ -350,14 +356,27 @@ def triangular_plot_common(
         for j, col_name in enumerate(column_names):
             ax_plot = fig.add_subplot(max_p, 2, (i - min_p) * 2 + j + 1)
 
-            # Plot data
-            az.plot_dist(
-                chain_common_p[:, j],
-                ax=ax_plot,
-                color=colors[j],
-                fill_kwargs={"alpha": 0.2},
-                plot_kwargs={"linewidth": 1},
-            )
+            # Catch warnings and delete the plot if the warning is raised
+            with warnings.catch_warnings():
+                message = "Your data appears to have a single value or no finite values"
+                warnings.filterwarnings("error", category=UserWarning, message=message)
+                try:
+                    # Plot data
+                    az.plot_dist(
+                        chain_common_p[:, j],
+                        ax=ax_plot,
+                        color=colors[j],
+                        fill_kwargs={"alpha": 0.2},
+                        plot_kwargs={"linewidth": 1},
+                    )
+                except UserWarning as e:
+                    if message in str(e):
+                        # fig.delaxes(ax_plot)
+                        ax_plot.axvline(
+                            chain_common_p[0, j],
+                            color=colors[j],
+                            linewidth=1,
+                        )
 
             ax_plot.set_yticklabels([])
             ax_plot.tick_params(axis="x", labelsize=8)
@@ -418,57 +437,70 @@ def plot_prediction_results(
     df_reference_one=None,
     df_reference_two=None,
     title="Prediction results",
+    score="RMSE",
 ):
-    fig, axs = plt.subplots(1, 2, figsize=(10, 5))
+    fig, axs = plt.subplots(1, 2, figsize=(10, 5.5))
 
-    df_all_methods_one_noise = df_all_methods_one[df_all_methods_one["Noise"] == True]
+    df_all_methods_one_noise = df_all_methods_one[df_all_methods_one["Noise"] == True]  # noqa: E712
     df_all_methods_one_noiseless = df_all_methods_one[
-        ~(df_all_methods_one["Noise"] == True)
+        ~(df_all_methods_one["Noise"] == True)  # noqa: E712
     ]
 
     axs[0].scatter(
-        df_all_methods_one_noise["RMSE"],
+        df_all_methods_one_noise[score],
         df_all_methods_one_noise["Estimator"],
         color="tab:green",
         label="RKHS methods with noise",
         s=20,
     )
     axs[0].scatter(
-        df_all_methods_one_noiseless["RMSE"],
+        df_all_methods_one_noiseless[score],
         df_all_methods_one_noiseless["Estimator"],
         color="tab:blue",
         label="RKHS methods without noise",
         s=20,
     )
     axs[1].scatter(
-        df_all_methods_two["RMSE"],
+        df_all_methods_two[score],
         df_all_methods_two["Estimator"],
         color="tab:blue",
         s=20,
     )
     if df_reference_one is not None:
+        # Separate the L^2 regression method to highlight it as a direct competitor
+        df_reference_one_without_flin = df_reference_one[
+            df_reference_one["Estimator"] != "flin"
+        ]
+        df_reference_flin = df_reference_one[df_reference_one["Estimator"] == "flin"]
         axs[0].scatter(
-            df_reference_one["RMSE"],
-            df_reference_one["Estimator"],
+            df_reference_one_without_flin[score],
+            df_reference_one_without_flin["Estimator"],
             color="tab:orange",
             label="Reference methods",
             s=20,
         )
+        axs[0].scatter(
+            df_reference_flin[score],
+            df_reference_flin["Estimator"],
+            color="tab:red",
+            label="Standard $L^2$ regression",
+            s=20,
+        )
         axs[0].axvline(
-            np.mean(df_reference_one["RMSE"]),
+            np.mean(df_reference_one[score]),
             linestyle="--",
             color="tab:orange",
             label="Mean of reference methods",
             alpha=0.5,
         )
         axs[1].scatter(
-            df_reference_two["RMSE"],
+            df_reference_two[score],
             df_reference_two["Estimator"],
             color="tab:orange",
             s=20,
         )
         axs[1].axvline(
-            np.mean(df_reference_two["RMSE"]),
+            np.mean(df_reference_two[score]),
             linestyle="--",
             color="tab:orange",
             alpha=0.5,
@@ -477,7 +509,7 @@ def plot_prediction_results(
     for ax in axs:
         ax.tick_params(axis="x", labelsize=10)
         ax.tick_params(axis="y", labelsize=10)
-        ax.set_xlabel("RMSE", fontsize=11)
+        ax.set_xlabel(score, fontsize=11)
         ax.xaxis.set_major_locator(MaxNLocator(nbins=6))
         # ax.xaxis.set_major_formatter(plt.FormatStrFormatter("%0.3f"))
         ax.xaxis.set_major_formatter(custom_format_xaxis)
@@ -490,7 +522,7 @@ def plot_prediction_results(
     fig.legend(
         *axs[0].get_legend_handles_labels(),
         loc="lower center",
-        bbox_to_anchor=(0.5, -0.15),
+        bbox_to_anchor=(0.5, -0.17),
         fontsize=10,
         ncol=2,
     )

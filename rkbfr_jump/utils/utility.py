@@ -37,12 +37,22 @@ class IgnoreWarnings:
 
 # Compute the "mode" of a continuous kde
 def mode_kde(arr):
+    if len(arr) == 1:
+        return arr[0]
+
     x, density = az.kde(arr)
     return x[np.argmax(density)]
 
 
 # Function to color a list of estimators present in another DataFrame
 def color_reference_methods(x, df):
-    return [
-        "color: orange; hide: axis" if val in list(df["Estimator"]) else "" for val in x
-    ]
+    format_str = []
+    for name in x:
+        if name == "flin":
+            format_str.append("color: crimson; hide: axis")
+        elif name in list(df["Estimator"]):
+            format_str.append("color: orange; hide: axis")
+        else:
+            format_str.append("")
+
+    return format_str

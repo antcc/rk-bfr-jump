@@ -28,14 +28,13 @@ def get_full_chain_at_T(
     Y_std_orig,
     T=0,
     discard=0,
-    transform_sigma=False,
     relabel_strategy="auto",
 ):
     # Get chain from sampler
     chain = deepcopy(sampler.get_chain(discard=discard))
 
     # Undo change sigma2 --> log_sigma if needed
-    if transform_sigma:
+    if theta_space.transform_sigma:
         chain["common"][:, T, ..., theta_space.idx_sigma2] = LogSqrtTransform.backward(
             chain["common"][:, T, ..., theta_space.idx_sigma2]
         )
@@ -188,6 +187,7 @@ def print_sampling_information(
     ensemble,
     idx_order,
     thin_by,
+    num_try=1,
     display_notebook=False,
 ):
     components_last = full_chain_components[-1, 0, :]  # last sample of first walker
@@ -230,6 +230,9 @@ def print_sampling_information(
     print(f"[GroupMoveRKHS] a={ensemble.moves[0].moves[0].a:.2f}")
     print(f"[StretchMove] a={ensemble.moves[0].moves[1].a:.2f}")
 
+    if ensemble.rj_moves[0].__class__.__name__ == "MTRJMoveRKHS":
+        print(f"\n* Num_try (for MT jump move): {num_try}")
+
     if full_chain_components.shape[2] > 1:
         print(
             f"\n* Chain ordered by: {'beta' if idx_order == theta_space.idx_beta else 'tau'}"
@@ -261,3 +264,41 @@ def pp_to_arviz_idata(pp, y_obs):
     az.concat(idata_pp, idata_obs, inplace=True)
 
     return idata_pp
+
+def setup_initial_coords_and_inds(
+    ntemps, nwalkers, nleaves_max, ndims, theta_space, prior, y, y_std_orig, seed
+):
+    # set coordinates for the leaf values in both branches
+    coords = {
+        branch: np.zeros((ntemps, nwalkers, nleaf, ndim))
+        for nleaf, ndim, branch in zip(
+            nleaves_max.values(), ndims.values(), nleaves_max.keys()
+        )
+    }
+
+    # fill random initial values from prior distribution
+    sample_initial_values(
+        coords,  # modifies the coords in-place
+        theta_space,
+        prior,
+        y_std_orig,
+        np.mean(y / y_std_orig),
+        np.mean(np.abs(y)),
+        seed=seed,
+    )
+
+    # set random indices for used/unused leaves of components (boolean 0/1)
+    inds = {}
+    inds["components"] = np.random.randint(
+        2, size=(ntemps, nwalkers, nleaves_max["components"]), dtype=bool
+    )
+
+    # we need to ensure that not all indices are zero on any walker,
+    # because nleaves_min = 1 for the components
+    fix_all_false_inds(inds["components"])  # modifies the inds in-place
+
+    # set indices for the single leaf of [alpha0,sigma2]
+    # (always used because nleaves_min["common"]=nleaves_max["common"]=1)
+    inds["common"] = np.ones((ntemps, nwalkers, nleaves_max["common"]), dtype=bool)
+
+    return coords, inds

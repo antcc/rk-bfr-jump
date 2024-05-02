@@ -67,7 +67,3 @@ class SqrtTransform:
     @njit(cache=True, fastmath=True, parallel=True)
     def backward(y):
         return y**2
-
-
-def rkhs_response_linear():
-    pass

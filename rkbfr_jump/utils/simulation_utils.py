@@ -1,5 +1,7 @@
 # encoding: utf-8
 
+import warnings
+
 import numpy as np
 from scipy.integrate import trapz
 from scipy.special import expit
@@ -244,8 +246,6 @@ def get_data_linear(
     kernel_fn=None,
     beta_coef_true=None,
     beta_tau_true=None,
-    initial_smoothing=False,
-    smoothing_params=None,
     tau_range=(0, 1),
     return_y_noiseless=False,
     rng=None,
@@ -273,6 +273,7 @@ def get_data_linear(
             y = generate_l2_dataset(
                 x, grid, beta_coef_true, alpha0_true, sigma2_true, rng=rng
             )
+
         elif model_type.lower() == "rkhs":
             beta_true, tau_true = beta_tau_true
             alpha0_true = 5.0
@@ -301,8 +302,10 @@ def get_data_linear(
             x_fd = FDataGrid(data[idx], x_fd.grid_points[0])
             y = y[idx, 1]  # Fat level
         elif model_type.lower() == "moisture":
-            data = fetch_cran("Moisturespectrum", "fds")["Moisturespectrum"]
-            y = fetch_cran("Moisturevalues", "fds")["Moisturevalues"]
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", category=UserWarning)
+                data = fetch_cran("Moisturespectrum", "fds")["Moisturespectrum"]
+                y = fetch_cran("Moisturevalues", "fds")["Moisturevalues"]
             x_fd = FDataGrid(data["y"].T[:, ::7], data["x"][::7])
         elif model_type.lower() == "sugar":
             data = np.load("data/sugar.npz")
