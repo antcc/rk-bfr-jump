@@ -1,5 +1,5 @@
 import numpy as np
-from skfda.representation.basis import Fourier
+from skfda.representation.basis import FourierBasis
 from skfda.representation.grid import FDataGrid
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.cross_decomposition import PLSRegression
@@ -31,7 +31,7 @@ class DataMatrix(BaseEstimator, TransformerMixin):
 
 
 class Basis(BaseEstimator, TransformerMixin):
-    def __init__(self, basis=Fourier()):
+    def __init__(self, basis=FourierBasis()):
         self.basis = basis
 
     def fit(self, X, y=None):

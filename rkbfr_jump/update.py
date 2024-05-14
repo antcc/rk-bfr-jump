@@ -27,6 +27,9 @@ class AdjustStretchScaleCombineMove(Update):
         self.previously_accepted = {}
 
     def __call__(self, iter, last_sample, sampler):
+        if sampler.backend.iteration == 0:
+            return
+
         for idx in self.idx_moves:
             move = sampler.moves[0].moves[idx]
             change = 1.0

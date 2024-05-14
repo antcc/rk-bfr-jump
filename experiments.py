@@ -50,14 +50,14 @@ pd.set_option("display.max_columns", 80)
 pd.set_option("styler.format.precision", 4)
 
 # I/O behavior
-PRINT_TO_FILE = False
+PRINT_TO_FILE = True
 SAVE_RESULTS = True
 PRINT_PATH = "results/scores/"
 SAVE_PATH = PRINT_PATH
 
 # Prediction algorithms
 RUN_REF_ALGS = True
-RUN_SUMMARY_ALGS = False
+RUN_SUMMARY_ALGS = True
 ERYN_PREDICTION_NOISE = True
 
 # Prediction parameters
@@ -184,6 +184,11 @@ def get_arg_parser():
         default=0,
         help="parameter lambda for the prior on p (0 means uniform prior)",
     )
+    parser.add_argument(
+        "--leaf-by-leaf",
+        action="store_true",
+        help="whether to sample in a leaf-by-leaf manner in the in-model moves of the components",
+    )
 
     # Optional misc. arguments
     parser.add_argument("-s", "--seed", type=int, help="random seed")
@@ -282,6 +287,7 @@ def main():
     nburn = args.nburn
     thin_by = 1
     num_try = args.num_try  # Number of tries for MT RJMCMC
+    group_move_leaf_by_leaf = args.leaf_by_leaf
 
     ##
     # GET DATASET
@@ -516,7 +522,7 @@ def main():
             # In-model move for alpha0 and sigma2
             move_stretch = StretchMove(gibbs_sampling_setup="common", a=2)
 
-            # Sample all parameters leaf by leaf in the components branch (currently unused)
+            # Sample all parameters leaf by leaf in the components branch
             gibbs_sampling_setup_group = [
                 (
                     "components",
@@ -535,7 +541,9 @@ def main():
                 dist_measure="beta",
                 nfriends=nwalkers,
                 n_iter_update=100,
-                gibbs_sampling_setup="components",  # gibbs_sampling_setup_group,
+                gibbs_sampling_setup=gibbs_sampling_setup_group
+                if group_move_leaf_by_leaf
+                else "components",
                 a=2,
             )
 
@@ -566,7 +574,7 @@ def main():
                 supression_factor=0.1,
                 min_a=1.1,
             )
-            update_iters = 50
+            update_iters = 100
 
             # --- Posterior sampling with Eryn (RJMCMC)
 
@@ -814,6 +822,9 @@ def main():
                 df_results_all += [df_metrics_ref]
 
             df_save = pd.concat(df_results_all, axis=0, ignore_index=True)
+            df_save = df_save.sort_values(
+                "Mean " + score_name, ascending=args.kind == "linear"
+            )
             df_save.to_csv(filepath_save, index=False)
 
             if not PRINT_TO_FILE:

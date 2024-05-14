@@ -2,3 +2,4 @@
 _*.md
 __pycache__/
 results/
+release/

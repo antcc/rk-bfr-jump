@@ -10,7 +10,7 @@ from skfda.ml.classification import KNeighborsClassifier, MaximumDepthClassifier
 from skfda.ml.classification import LogisticRegression as FLR
 from skfda.ml.classification import NearestCentroid as FNC
 from skfda.ml.regression import LinearRegression as FLinearRegression
-from skfda.preprocessing.dim_reduction.feature_extraction import FPCA
+from skfda.preprocessing.dim_reduction import FPCA
 from skfda.preprocessing.dim_reduction.variable_selection import (
     RKHSVariableSelection as RKVS,
 )
@@ -180,6 +180,7 @@ def get_reference_models_linear(max_n_components, seed):
     basis_fourier = [FourierBasis(n_basis=p) for p in n_basis_fourier]
 
     params_regularizer = {"reg__alpha": alphas}
+    params_regularizer_flin = {"reg__regularization__regularization_parameter": alphas}
     params_select = {"selector__p": n_components}
     params_pls = {"reg__n_components": n_components}
     params_dim_red = {"dim_red__n_components": n_components}
@@ -187,6 +188,7 @@ def get_reference_models_linear(max_n_components, seed):
 
     regressors = linear_regression_comparison_suite(
         params_regularizer,
+        params_regularizer_flin,
         params_select,
         params_dim_red,
         params_basis,
@@ -199,6 +201,7 @@ def get_reference_models_linear(max_n_components, seed):
 
 def linear_regression_comparison_suite(
     params_regularizer,
+    params_regularizer_flin,
     params_select,
     params_dim_red,
     params_basis,
@@ -324,10 +327,17 @@ def linear_regression_comparison_suite(
             Pipeline(
                 [
                     ("basis", Basis()),
-                    ("reg", FLinearRegression()),
+                    (
+                        "reg",
+                        FLinearRegression(
+                            regularization=L2Regularization(
+                                linear_operator=LinearDifferentialOperator(2)
+                            )
+                        ),
+                    ),
                 ]
             ),
-            params_basis,
+            {**params_basis, **params_regularizer_flin},
         )
     )
 

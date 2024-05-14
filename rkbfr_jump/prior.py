@@ -133,7 +133,7 @@ class RKHSPriorLinear:
 
         return lp_beta + lp_tau
 
-    def logpdf(self, coords, inds):
+    def logpdf(self, coords, inds, supps=None, branch_supps=None):
         # Get current values of theta
         beta = coords["components"][..., self.ts.idx_beta]
         tau = coords["components"][..., self.ts.idx_tau]

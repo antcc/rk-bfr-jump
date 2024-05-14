@@ -183,6 +183,7 @@ def sample_initial_values(
 def print_sampling_information(
     full_chain_components,
     full_chain_common,
+    inds_components,
     theta_space,
     ensemble,
     idx_order,
@@ -240,6 +241,36 @@ def print_sampling_information(
 
     print("\n* ", end="")
     _ = ensemble.backend.get_gelman_rubin_convergence_diagnostic(thin=thin_by)
+
+    print("ESS (Effective Sample Size):")
+    idata_common = trace_to_arviz_idata(full_chain_common)
+    idata_components = trace_to_arviz_idata(full_chain_components, inds_components)
+    ess_common = az.ess(idata_common)["x"].values
+    ess_components = az.ess(idata_components)["x"].values
+    print(
+        f"  b: {int(ess_components[0]):,}\n  t: {int(ess_components[1]):,}\n  alpha0: {int(ess_common[0]):,}\n  sigma2: {int(ess_common[1]):,}"
+    )
+
+
+def trace_to_arviz_idata(chain, inds=None):
+    if chain.ndim <= 3:
+        chain_in = chain.swapaxes(0, 1)
+        name = "common"
+    else:
+        if inds is None:
+            warnings.warn("No inds provided. Assuming all are true.")
+            inds = np.ones(chain.shape[:-1], dtype=np.bool_)
+
+        _, nwalkers, _, ndim = chain.shape
+        min_leaves = inds.sum(axis=(0, 2)).min()
+        tmp = [inds[:, w].flatten() for w in range(nwalkers)]
+        keep = [np.where(tmp[w])[0][:min_leaves] for w in range(len(tmp))]
+        chain_in = np.asarray(
+            [chain[:, w].reshape(-1, ndim)[keep[w]] for w in range(nwalkers)]
+        )
+        name = "components"
+
+    return az.convert_to_dataset(chain_in, dims={"x": ["chain", "draw", name]})
 
 
 def pp_to_arviz_idata(pp, y_obs):
