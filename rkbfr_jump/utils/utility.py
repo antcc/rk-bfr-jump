@@ -28,6 +28,11 @@ class IgnoreWarnings:
             category=UserWarning,
             message="One or more of the test scores are non-finite:",
         )
+        warnings.filterwarnings(
+            "ignore",
+            category=UserWarning,
+            message="Variables are collinear",
+        )
         return self
 
     def __exit__(self, exc_type, exc_value, exc_tb):

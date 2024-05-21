@@ -334,17 +334,33 @@ def triangular_plot_components(
 
 
 def posterior_plot_common(
-    chain_common, nleaves, idx_samples, colors, color_p="red", figsize=(7, 7)
+    chain_common,
+    nleaves,
+    idx_samples,
+    colors,
+    color_p="red",
+    figsize=(7, 7),
+    plot_sigma2=True,
 ):
     fig = plt.figure(figsize=figsize)
-    fig.suptitle("Posterior distribution of alpha0 and sigma2", fontweight="semibold")
+
+    if plot_sigma2:
+        fig.suptitle(
+            "Posterior distribution of alpha0 and sigma2", fontweight="semibold"
+        )
+    else:
+        fig.suptitle(
+            "Posterior distribution of alpha0",
+            fontweight="semibold",
+            horizontalalignment="right",
+        )
 
     # Get effective range of p
     min_p, max_p = np.min(nleaves), np.max(nleaves)
 
     # Row and column names
     row_names = [f"p={p}" for p in np.arange(min_p, max_p + 1)]
-    column_names = ["alpha0", "sigma2"]
+    column_names = ["alpha0", "sigma2"] if plot_sigma2 else ["alpha0"]
 
     # Record MAP value of p
     map_p = mode_discrete(nleaves, axis=None).mode
@@ -402,8 +418,14 @@ def posterior_plot_common(
                 )
 
 
-def plot_flat_posterior(samples_vars, theta_space, colors, ref_values=None):
+def plot_flat_posterior(
+    samples_vars, theta_space, colors, ref_values=None, plot_sigma2=True
+):
     fig, axs = plt.subplots(2, 2, figsize=(9, 5))
+
+    if not plot_sigma2:
+        fig.delaxes(axs[1, 1])
+
     for i, (var, samples, color) in enumerate(
         zip(theta_space.names, samples_vars, colors)
     ):
@@ -438,6 +460,7 @@ def plot_prediction_results(
     df_reference_two=None,
     title="Prediction results",
     score="RMSE",
+    kind="linear",
 ):
     fig, axs = plt.subplots(1, 2, figsize=(10, 5.5))
 
@@ -467,11 +490,14 @@ def plot_prediction_results(
         s=20,
     )
     if df_reference_one is not None:
+        standard_l2 = "flin" if kind == "linear" else "flog"
         # Separate the L^2 regression method to highlight it as a direct competitor
         df_reference_one_without_flin = df_reference_one[
-            df_reference_one["Estimator"] != "flin"
+            df_reference_one["Estimator"] != standard_l2
         ]
-        df_reference_flin = df_reference_one[df_reference_one["Estimator"] == "flin"]
+        df_reference_flin = df_reference_one[
+            df_reference_one["Estimator"] == standard_l2
+        ]
         axs[0].scatter(
             df_reference_one_without_flin[score],
             df_reference_one_without_flin["Estimator"],
@@ -483,7 +509,7 @@ def plot_prediction_results(
             df_reference_flin[score],
             df_reference_flin["Estimator"],
             color="tab:red",
-            label="Standard $L^2$ regression",
+            label=f"Standard $L^2$ {kind} regression",
             s=20,
         )
         axs[0].axvline(
@@ -539,9 +565,12 @@ def plot_ppc(
     is_test_data,
     num_pp_samples=500,
     figsize=(6, 4),
+    kind="linear",
 ):
-    pp = predict_pp(chain_components, chain_common, theta_space, X, noise=True)
-    idata_pp_train = pp_to_arviz_idata(pp, y)
+    pp = predict_pp(
+        chain_components, chain_common, theta_space, X, noise=True, kind=kind
+    )
+    idata_pp = pp_to_arviz_idata(pp, y)
 
     fig, ax = plt.subplots(figsize=figsize)
     ax.set_title(
@@ -550,9 +579,33 @@ def plot_ppc(
 
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=FutureWarning)
-        az.plot_ppc(
-            idata_pp_train,
-            data_pairs={"y_obs": "y_star"},
-            num_pp_samples=num_pp_samples,
-            ax=ax,
-        )
+        if kind == "linear":
+            az.plot_ppc(
+                idata_pp,
+                data_pairs={"y_obs": "y_star"},
+                num_pp_samples=num_pp_samples,
+                ax=ax,
+            )
+        else:  # logistic
+            n_success = pp.reshape(-1, pp.shape[-1]).sum(axis=-1)
+            y_str = "Y" if not is_test_data else "Y_{test}"
+            ax.set_yticks([])
+            ax.tick_params(labelsize=8)
+            ax.set_title("T = No. of successes (1's)")
+            az.plot_dist(n_success, label=rf"$T({y_str}^*)$", ax=ax)
+
+            ax.axvline(
+                n_success.mean(),
+                ls="--",
+                color="orange",
+                lw=2,
+                label=rf"$Mean(T({y_str}^*))$",
+            )
+            ax.axvline(
+                y.sum(),
+                ls="--",
+                color="red",
+                lw=2,
+                label=rf"$T({y_str})$",
+            )
+            ax.legend(fontsize=10)

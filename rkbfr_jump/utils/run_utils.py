@@ -4,6 +4,7 @@ from itertools import product
 import numpy as np
 import pandas as pd
 from scipy.stats import mode as mode_discrete
+from skfda.exploratory.depth import IntegratedDepth, ModifiedBandDepth
 from skfda.misc.operators import LinearDifferentialOperator
 from skfda.misc.regularization import L2Regularization
 from skfda.ml.classification import KNeighborsClassifier, MaximumDepthClassifier
@@ -34,16 +35,21 @@ from .sklearn_utils import Basis, DataMatrix, FeatureSelector, PLSRegressionWrap
 from .utility import IgnoreWarnings
 
 
-def fill_df_scores(df, y_true, y_pred, name, features, noise):
-    rmse = root_mean_squared_error(y_true, y_pred)
+def fill_df_scores(df, y_true, y_pred, name, features, noise, kind="linear"):
+    if kind == "linear":
+        rmse = root_mean_squared_error(y_true, y_pred)
 
-    df.loc[len(df)] = [
-        name,
-        features,
-        noise,
-        rmse,
-        rmse / np.std(y_true),
-    ]
+        df.loc[len(df)] = [
+            name,
+            features,
+            noise,
+            rmse,
+            rmse / np.std(y_true),
+        ]
+    else:  # logistic
+        acc = accuracy_score(y_true, y_pred)
+
+        df.loc[len(df)] = [name, features, noise, acc]
 
 
 def cv_sk(
@@ -76,10 +82,7 @@ def cv_sk(
         with IgnoreWarnings():
             est_cv.fit(X, y)
 
-        if name == "fknn":
-            K = est_cv.best_params_[f"{est_name}__n_neighbors"]
-            n_features = f"K={K}"
-        elif name == "mdc" or name == "fnc":
+        if name == "mdc" or name == "fnc" or name == "fknn":
             n_features = X.data_matrix.shape[1]
         elif name == "flr":
             n_features = est_cv.best_estimator_[est_name].p
@@ -141,7 +144,7 @@ def linear_regression_metrics(
         # r2
     ]
 
-    df.sort_values(df.columns[sort_by], inplace=True)
+    df.sort_values(df.columns[sort_by], inplace=True, ascending=True)
 
     return df
 
@@ -257,7 +260,10 @@ def linear_regression_comparison_suite(
             "fpca+ridge",
             Pipeline(
                 [
-                    ("dim_red", FPCA(n_components=3)),  # Retains scores only
+                    (
+                        "dim_red",
+                        FPCA(n_components=3),
+                    ),  # Retains scores only; 3 is a placeholder
                     ("reg", Ridge(random_state=random_state)),
                 ]
             ),
@@ -419,7 +425,10 @@ def logistic_regression_comparison_suite(
             "fpca+log",
             Pipeline(
                 [
-                    ("dim_red", FPCA(n_components=3)),  # Retains scores only
+                    (
+                        "dim_red",
+                        FPCA(n_components=3),
+                    ),  # Retains scores only; 3 is a placeholder
                     ("clf", LogisticRegression(random_state=random_state)),
                 ]
             ),
@@ -565,19 +574,18 @@ def logistic_regression_comparison_suite(
     return classifiers
 
 
-def get_reference_models_logistic(X, y, seed):
+def get_reference_models_logistic(max_n_components, seed):
     Cs = np.logspace(-4, 4, 20)
-    n_selected = [5, 10, 15, 20, 25, 50]
-    n_components = [2, 3, 4, 5, 7, 10, 15, 20]
-    n_neighbors = [3, 5, 7, 9, 11]
+    n_components = np.arange(max_n_components) + 1
+    n_neighbors = [3, 5, 7, 9, 11, 13]
 
     pls_regressors = [PLSRegressionWrapper(n_components=p) for p in n_components]
 
     params_clf = {"clf__C": Cs}
-    params_select = {"selector__p": n_selected}
+    params_select = {"selector__p": n_components}
     params_dim_red = {"dim_red__n_components": n_components}
     params_var_sel = {"var_sel__n_features_to_select": n_components}
-    params_flr = {"clf__p": n_components}
+    params_flr = {"clf__max_features": n_components}
     params_knn = {
         "clf__n_neighbors": n_neighbors,
         "clf__weights": ["uniform", "distance"],
@@ -601,7 +609,7 @@ def get_reference_models_logistic(X, y, seed):
     return classifiers
 
 
-def compute_eryn_linear_predictions(
+def compute_eryn_predictions(
     chain_components,
     chain_common,
     nleaves,
@@ -617,6 +625,7 @@ def compute_eryn_linear_predictions(
     include_summary_methods=True,
     noise="both",  # True, False or 'both'
     seed=None,
+    kind="linear",
 ):
     if seed is not None:
         np.random.seed(seed)
@@ -641,9 +650,10 @@ def compute_eryn_linear_predictions(
             X_test,
             aggregate_pp,
             noise=noise,
+            kind=kind,
         )
 
-        fill_df_scores(df, y_test, Y_pred, name, max_used_p, noise)
+        fill_df_scores(df, y_test, Y_pred, name, max_used_p, noise, kind=kind)
 
     # Method 2 (Weighted PP)
     names_w_pp = ["w_pp_mean", "w_pp_tmean", "w_pp_median", "w_pp_mode"]
@@ -658,9 +668,10 @@ def compute_eryn_linear_predictions(
             X_test,
             aggregate_pp,
             noise=noise,
+            kind=kind,
         )
 
-        fill_df_scores(df, y_test, Y_pred, name, max_used_p, noise)
+        fill_df_scores(df, y_test, Y_pred, name, max_used_p, noise, kind=kind)
 
     # Method 3 (MAP PP)
     names_map_pp = ["map_pp_mean", "map_pp_tmean", "map_pp_median", "map_pp_mode"]
@@ -678,9 +689,10 @@ def compute_eryn_linear_predictions(
             X_test,
             aggregate_pp,
             noise=noise,
+            kind=kind,
         )
 
-        fill_df_scores(df, y_test, Y_pred, name, map_p, noise)
+        fill_df_scores(df, y_test, Y_pred, name, map_p, noise, kind=kind)
 
     if include_summary_methods:
         # Method 4 (Weighted summary)
@@ -693,9 +705,12 @@ def compute_eryn_linear_predictions(
                 theta_space,
                 X_test,
                 summary_statistic,
+                kind=kind,
             )
 
-            fill_df_scores(df, y_test, Y_pred, "w_summary_" + name, max_used_p, "N/A")
+            fill_df_scores(
+                df, y_test, Y_pred, "w_summary_" + name, max_used_p, "N/A", kind=kind
+            )
 
         # Method 5 (MAP summary)
         for name, summary_statistic in zip(names_summary, summary_statistics):
@@ -707,28 +722,47 @@ def compute_eryn_linear_predictions(
                 theta_space,
                 X_test,
                 summary_statistic,
+                kind=kind,
             )
 
-            fill_df_scores(df, y_test, Y_pred, "map_summary_" + name, map_p, "N/A")
+            fill_df_scores(
+                df, y_test, Y_pred, "map_summary_" + name, map_p, "N/A", kind=kind
+            )
 
     # Method 6 (Weighted variable selection)
     names_vs = ["mean", "tmean", "median", "mode"]
-    params_regularizer = {"reg__alpha": np.logspace(-4, 4, 20)}
-    regs = [
-        (
-            "ridge",
-            GridSearchCV(
-                Pipeline([("reg", Ridge(random_state=seed))]),
-                params_regularizer,
-                scoring="neg_mean_squared_error",
-                n_jobs=-1,
-                cv=cv_folds,
-            ),
-        )
-    ]
-    for (summary_name, summary_statistic), (reg_name, reg) in product(
-        zip(names_vs, summary_statistics), regs
-    ):
+    if kind == "linear":
+        params_regularizer = {"reg__alpha": np.logspace(-4, 4, 20)}
+        finite_estimators = [
+            (
+                "ridge",
+                GridSearchCV(
+                    Pipeline([("reg", Ridge(random_state=seed))]),
+                    params_regularizer,
+                    scoring="neg_mean_squared_error",
+                    n_jobs=-1,
+                    cv=cv_folds,
+                ),
+            )
+        ]
+    else:  # logistic
+        params_regularizer = {"clf__C": np.logspace(-4, 4, 20)}
+        finite_estimators = [
+            (
+                "log",
+                GridSearchCV(
+                    Pipeline([("clf", LogisticRegression(random_state=seed))]),
+                    params_regularizer,
+                    scoring="accuracy",
+                    n_jobs=-1,
+                    cv=cv_folds,
+                ),
+            )
+        ]
+    for (summary_name, summary_statistic), (
+        estimator_name,
+        finite_estimator,
+    ) in product(zip(names_vs, summary_statistics), finite_estimators):
         Y_pred = prediction.predict_weighted_variable_selection(
             chain_components,
             chain_common,
@@ -738,22 +772,25 @@ def compute_eryn_linear_predictions(
             y_train,
             X_test,
             summary_statistic,
-            reg,
+            finite_estimator,
+            kind=kind,
         )
 
         fill_df_scores(
             df,
             y_test,
             Y_pred,
-            "w_vs_" + summary_name + "+" + reg_name,
+            "w_vs_" + summary_name + "+" + estimator_name,
             max_used_p,
             "N/A",
+            kind=kind,
         )
 
     # Method 7 (MAP variable selection)
-    for (summary_name, summary_statistic), (reg_name, reg) in product(
-        zip(names_vs, summary_statistics), regs
-    ):
+    for (summary_name, summary_statistic), (
+        estimator_name,
+        finite_estimator,
+    ) in product(zip(names_vs, summary_statistics), finite_estimators):
         Y_pred = prediction.predict_map_variable_selection(
             chain_components,
             chain_common,
@@ -764,13 +801,20 @@ def compute_eryn_linear_predictions(
             y_train,
             X_test,
             summary_statistic,
-            reg,
+            finite_estimator,
+            kind=kind,
         )
 
         fill_df_scores(
-            df, y_test, Y_pred, "map_vs_" + summary_name + "+" + reg_name, map_p, "N/A"
+            df,
+            y_test,
+            Y_pred,
+            "map_vs_" + summary_name + "+" + estimator_name,
+            map_p,
+            "N/A",
+            kind=kind,
         )
 
-    df.sort_values(df.columns[sort_by], inplace=True)
+    df.sort_values(df.columns[sort_by], inplace=True, ascending=kind == "linear")
 
     return df

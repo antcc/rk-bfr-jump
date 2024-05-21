@@ -25,32 +25,40 @@ def get_full_chain_at_T(
     sampler,
     theta_space,
     X_std_orig,
-    Y_std_orig,
+    Y_std_orig=None,
     T=0,
     discard=0,
     relabel_strategy="auto",
+    kind="linear",
 ):
     # Get chain from sampler
     chain = deepcopy(sampler.get_chain(discard=discard))
 
     # Undo change sigma2 --> log_sigma if needed
-    if theta_space.transform_sigma:
+    if kind == "linear" and theta_space.transform_sigma:
         chain["common"][:, T, ..., theta_space.idx_sigma2] = LogSqrtTransform.backward(
             chain["common"][:, T, ..., theta_space.idx_sigma2]
         )
 
     chain_components = chain["components"][:, T, ...]
-    chain_common = chain["common"][:, T, ...].squeeze()
+    chain_common = chain["common"][:, T, ...].squeeze(
+        axis=2
+    )  # squeeze the nleaves_max dimension
 
     # Revert components back to original scale
     tau_old = chain_components[..., theta_space.idx_tau]
     idx_tau_grid = theta_space.get_idx_tau_grid(tau_old)
 
+    if kind == "logistic":
+        Y_std_orig = 0.5
+
     chain_components[..., theta_space.idx_beta] *= (
         Y_std_orig / X_std_orig[idx_tau_grid]
     )  # Revert beta
-    chain_common[..., theta_space.idx_alpha0] *= Y_std_orig  # Revert alpha0
-    chain_common[..., theta_space.idx_sigma2] *= Y_std_orig**2  # Revert sigma2
+
+    if kind == "linear":
+        chain_common[..., theta_space.idx_alpha0] *= Y_std_orig  # Revert alpha0
+        chain_common[..., theta_space.idx_sigma2] *= Y_std_orig**2  # Revert sigma2
 
     # Get indices
     inds = sampler.get_inds(discard=discard).copy()
@@ -131,55 +139,6 @@ def get_flat_chain_components(coords, theta_space, ndim):
     return samples_flat
 
 
-def fix_all_false_inds(inds):
-    idx_all_false = np.where(
-        np.sum(inds, axis=-1) == 0
-    )  # Find branches with 0 active components
-    inds[*idx_all_false, 0] = True  # Set the first component to True
-
-
-def sample_initial_values(
-    coords, theta_space, prior, y_std_orig, y_scaled_mean, y_mean_abs, seed=None
-):
-    if seed is not None:
-        np.random.seed(seed)
-
-    size_components = coords["components"].shape[:-1]
-
-    # sample initial values for components values (b) from prior
-    coords["components"][..., theta_space.idx_beta] = prior.container["components"].rvs(
-        size=size_components, keys=[theta_space.idx_beta]
-    )[..., theta_space.idx_beta]
-
-    # uniform initial values for component times (t), but constricted to be different
-    coords["components"][..., theta_space.idx_tau] = generate_valid_t(
-        size_components, theta_space.grid, prior.min_dist_tau, shuffle=True, seed=seed
-    )
-    assert np.all(
-        check_valid_t(
-            theta_space.get_idx_tau_grid(
-                coords["components"][..., theta_space.idx_tau]
-            ),
-            min_dist=prior.min_dist_tau,
-        )
-    )
-
-    # sample initial values for alpha0 from normal distribution
-    coords["common"][:, :, 0, theta_space.idx_alpha0] = norm(
-        0, 10 * np.abs(y_scaled_mean)
-    ).rvs(size=size_components[:2])
-
-    # sample initial values for sigma2 from inverse-gamma distribution
-    sigma2_initial_values = invgamma(2, scale=y_mean_abs / (100 * y_std_orig**2)).rvs(
-        size=size_components[:2]
-    )
-    coords["common"][:, :, 0, theta_space.idx_sigma2] = (
-        LogSqrtTransform.forward(sigma2_initial_values)
-        if theta_space.transform_sigma
-        else sigma2_initial_values
-    )
-
-
 def print_sampling_information(
     full_chain_components,
     full_chain_common,
@@ -190,6 +149,7 @@ def print_sampling_information(
     thin_by,
     num_try=1,
     display_notebook=False,
+    kind="linear",
 ):
     components_last = full_chain_components[-1, 0, :]  # last sample of first walker
     common_last = full_chain_common[-1, 0, :]  # last sample of first walker
@@ -200,12 +160,16 @@ def print_sampling_information(
             "$t$": components_last[:, theta_space.idx_tau],
         }
     )
-    df_common = pd.DataFrame(
-        {
-            "$\\alpha_0$": [common_last[theta_space.idx_alpha0]],
-            "$\\sigma^2$": [common_last[theta_space.idx_sigma2]],
-        }
-    )
+
+    if kind == "linear":
+        df_common = pd.DataFrame(
+            {
+                "$\\alpha_0$": [common_last[theta_space.idx_alpha0]],
+                "$\\sigma^2$": [common_last[theta_space.idx_sigma2]],
+            }
+        )
+    else:
+        df_common = pd.DataFrame({"$\\alpha_0$": [common_last[theta_space.idx_alpha0]]})
     if display_notebook:
         display(df_components)
         display(df_common.style.hide(axis="index"))
@@ -242,14 +206,15 @@ def print_sampling_information(
     print("\n* ", end="")
     _ = ensemble.backend.get_gelman_rubin_convergence_diagnostic(thin=thin_by)
 
-    print("ESS (Effective Sample Size):")
+    """print("ESS (Effective Sample Size):")
     idata_common = trace_to_arviz_idata(full_chain_common)
     idata_components = trace_to_arviz_idata(full_chain_components, inds_components)
     ess_common = az.ess(idata_common)["x"].values
     ess_components = az.ess(idata_components)["x"].values
     print(
-        f"  b: {int(ess_components[0]):,}\n  t: {int(ess_components[1]):,}\n  alpha0: {int(ess_common[0]):,}\n  sigma2: {int(ess_common[1]):,}"
-    )
+        f"  b: {int(ess_components[0]):,}\n  t: {int(ess_components[1]):,}\n"
+        f"  alpha0: {int(ess_common[0]):,}\n  sigma2: {int(ess_common[1]):,}"
+    )"""
 
 
 def trace_to_arviz_idata(chain, inds=None):
@@ -297,7 +262,16 @@ def pp_to_arviz_idata(pp, y_obs):
     return idata_pp
 
 def setup_initial_coords_and_inds(
-    ntemps, nwalkers, nleaves_max, ndims, theta_space, prior, y, y_std_orig, seed
+    ntemps,
+    nwalkers,
+    nleaves_max,
+    ndims,
+    theta_space,
+    prior,
+    y,
+    y_std_orig=None,
+    seed=None,
+    kind="linear",
 ):
     # set coordinates for the leaf values in both branches
     coords = {
@@ -312,9 +286,10 @@ def setup_initial_coords_and_inds(
         coords,  # modifies the coords in-place
         theta_space,
         prior,
-        y_std_orig,
-        np.mean(y / y_std_orig),
-        np.mean(np.abs(y)),
+        sample_sigma2=kind == "linear",
+        y_std_orig=y_std_orig,
+        y_scaled_mean=np.mean(y / y_std_orig) if kind == "linear" else None,
+        y_mean_abs=np.mean(np.abs(y)) if kind == "linear" else None,
         seed=seed,
     )
 
@@ -328,8 +303,73 @@ def setup_initial_coords_and_inds(
     # because nleaves_min = 1 for the components
     fix_all_false_inds(inds["components"])  # modifies the inds in-place
 
-    # set indices for the single leaf of [alpha0,sigma2]
+    # set indices for the single leaf of the common branch
     # (always used because nleaves_min["common"]=nleaves_max["common"]=1)
     inds["common"] = np.ones((ntemps, nwalkers, nleaves_max["common"]), dtype=bool)
 
     return coords, inds
+
+
+def fix_all_false_inds(inds):
+    idx_all_false = np.where(
+        np.sum(inds, axis=-1) == 0
+    )  # Find branches with 0 active components
+    inds[*idx_all_false, 0] = True  # Set the first component to True
+
+
+def sample_initial_values(
+    coords,
+    theta_space,
+    prior,
+    sample_sigma2=True,
+    y_std_orig=None,
+    y_scaled_mean=None,
+    y_mean_abs=None,
+    seed=None,
+):
+    if seed is not None:
+        np.random.seed(seed)
+
+    size_components = coords["components"].shape[:-1]
+
+    # sample initial values for components values (b) from prior
+    coords["components"][..., theta_space.idx_beta] = prior.container["components"].rvs(
+        size=size_components, keys=[theta_space.idx_beta]
+    )[..., theta_space.idx_beta]
+
+    # uniform initial values for component times (t), but constricted to be different
+    coords["components"][..., theta_space.idx_tau] = generate_valid_t(
+        size_components, theta_space.grid, prior.min_dist_tau, shuffle=True, seed=seed
+    )
+    assert np.all(
+        check_valid_t(
+            theta_space.get_idx_tau_grid(
+                coords["components"][..., theta_space.idx_tau]
+            ),
+            min_dist=prior.min_dist_tau,
+        )
+    )
+
+    # sample initial values for alpha0
+    if sample_sigma2:
+        dist_alpha0_initial = norm(0, 10 * np.abs(y_scaled_mean))
+        size_alpha0 = size_components[:2] + (1,)
+    else:
+        dist_alpha0_initial = prior.container["common"]
+        size_alpha0 = size_components[:2]
+
+    coords["common"][:, :, :, theta_space.idx_alpha0] = dist_alpha0_initial.rvs(
+        size=size_alpha0
+    )
+
+    # sample initial values for sigma2 from inverse-gamma distribution
+    if sample_sigma2:
+        sigma2_initial_values = invgamma(
+            2, scale=y_mean_abs / (100 * y_std_orig**2)
+        ).rvs(size=size_components[:2])
+
+        coords["common"][:, :, 0, theta_space.idx_sigma2] = (
+            LogSqrtTransform.forward(sigma2_initial_values)
+            if theta_space.transform_sigma
+            else sigma2_initial_values
+        )

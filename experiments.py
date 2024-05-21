@@ -21,9 +21,6 @@ from collections import defaultdict
 
 import numpy as np
 import pandas as pd
-from eryn.ensemble import EnsembleSampler
-from eryn.moves import CombineMove, StretchMove
-from eryn.state import State
 from scipy.stats import trim_mean
 from sklearn.model_selection import (
     KFold,
@@ -31,12 +28,15 @@ from sklearn.model_selection import (
     train_test_split,
 )
 
+from eryn.ensemble import EnsembleSampler
+from eryn.moves import CombineMove, StretchMove
+from eryn.state import State
 from rkbfr_jump import chain_utils, run_utils, utility
 from rkbfr_jump import simulation_utils as simulation
-from rkbfr_jump.likelihood import RKHSLikelihoodLinear
+from rkbfr_jump.likelihood import RKHSLikelihoodLinear, RKHSLikelihoodLogistic
 from rkbfr_jump.moves import GroupMoveRKHS, MTRJMoveRKHS, RJMoveRKHS
 from rkbfr_jump.parameters import ThetaSpace
-from rkbfr_jump.prior import RKHSPriorLinear
+from rkbfr_jump.prior import RKHSPriorLinear, RKHSPriorLogistic
 from rkbfr_jump.update import AdjustStretchScaleCombineMove
 
 ###################################################################
@@ -58,7 +58,6 @@ SAVE_PATH = PRINT_PATH
 # Prediction algorithms
 RUN_REF_ALGS = True
 RUN_SUMMARY_ALGS = True
-ERYN_PREDICTION_NOISE = True
 
 # Prediction parameters
 NFOLDS_CV = 10
@@ -173,10 +172,10 @@ def get_arg_parser():
         help="number of tries in Multiple Try RJ scheme (1 for no MT)",
     )
     parser.add_argument(
-        "--sd-prior-beta",
-        type=int,
+        "--scale-prior-beta",
+        type=float,
         default=5,
-        help="SD for the vague prior on beta",
+        help="Scale for the vague prior on beta",
     )
     parser.add_argument(
         "--lambda-p",
@@ -188,6 +187,14 @@ def get_arg_parser():
         "--leaf-by-leaf",
         action="store_true",
         help="whether to sample in a leaf-by-leaf manner in the in-model moves of the components",
+    )
+
+    # Optional prediction arguments
+    parser.add_argument(
+        "--prediction-noise",
+        action="store_true",
+        help="whether to include noise in the predictions: add the value of sigma2"
+        " in the linear case or sample from a Bernouilli in the logistic case",
     )
 
     # Optional misc. arguments
@@ -228,14 +235,17 @@ def main():
     np.random.seed(seed)
     rng = np.random.default_rng(seed)
 
+    # Linear or logistic problem
+    kind = args.kind
+
     # CV parameters
-    if args.kind == "linear":
+    if kind == "linear":
         cv_folds = KFold(NFOLDS_CV, shuffle=True, random_state=seed)
     else:
         cv_folds = StratifiedKFold(NFOLDS_CV, shuffle=True, random_state=seed)
 
     # Score and columns names for the results dataframes
-    if args.kind == "linear":
+    if kind == "linear":
         score_name = SCORE_NAME_LINEAR
         column_names_split = ["Estimator", "Features", "Noise", "RMSE", "rRMSE"]
     else:
@@ -249,7 +259,7 @@ def main():
         f"Mean {score_name}",
         f"SD {score_name}",
     ]
-    sort_by_split = -2 if args.kind == "linear" else -1
+    sort_by_split = -2 if kind == "linear" else -1
 
     # --- Dataset generation parameters
 
@@ -265,7 +275,9 @@ def main():
     # --- Bayesian model parameters
 
     relabel_strategy = "auto"
-    sd_prior_beta = args.sd_prior_beta
+    df_prior_beta = 5
+    scale_prior_beta = args.scale_prior_beta
+    scale_prior_alpha0 = 10
     lambda_p = args.lambda_p if args.lambda_p > 0 else None  # 0 means uniform prior
 
     summary_statistics = [
@@ -280,7 +292,7 @@ def main():
     branch_names = ["components", "common"]
     nleaves_max = {"components": args.nleaves_max, "common": 1}
     nleaves_min = {"components": 1, "common": 1}
-    ndims = {"components": 2, "common": 2}
+    ndims = {"components": 2, "common": 2 if kind == "linear" else 1}
     nwalkers = args.nwalkers
     ntemps = args.ntemps
     nsteps = args.nsteps
@@ -315,7 +327,7 @@ def main():
     nsamples = args.nsamples
 
     # Retrieve data
-    if args.kind == "linear":
+    if kind == "linear":
         regressor_type = "gbm" if args.kernel == "gbm" else "gp"
         x_fd, y, grid = simulation.get_data_linear(
             is_simulated_data,
@@ -352,18 +364,19 @@ def main():
             mean_vector2 = None
             kernel_fn2 = None
 
-        X_fd, y, grid = simulation.get_data_logistic(
+        x_fd, y, grid = simulation.get_data_logistic(
             is_simulated_data,
             model_type,
             nsamples,
             ngrid,
+            mean_vector=mean_vector,
             kernel_fn=kernel_fn,
-            beta_coef=beta_coef_true,
+            beta_coef_true=beta_coef_true,
+            beta_tau_true=[beta_true, tau_true],
             noise=args.noise,
-            initial_smoothing=args.smoothing,
             tau_range=tau_range,
-            kernel_fn2=kernel_fn2,
             mean_vector2=mean_vector2,
+            kernel_fn2=kernel_fn2,
             rng=rng,
         )
 
@@ -375,12 +388,19 @@ def main():
     # GET PARAMETER SPACE
     ##
 
-    theta_space = ThetaSpace(
-        grid,
-        names=["b", "t", "alpha0", "sigma2"],
-        idx=[0, 1, 0, 1],
-        transform_sigma=TRANSFORM_SIGMA,
-    )
+    if kind == "linear":
+        theta_space = ThetaSpace(
+            grid,
+            names=["b", "t", "alpha0", "sigma2"],
+            idx=[0, 1, 0, 1],
+            transform_sigma=TRANSFORM_SIGMA,
+        )
+    else:  # logistic
+        theta_space = ThetaSpace(
+            grid,
+            names=["b", "t", "alpha0"],
+            idx=[0, 1, 0],
+        )
 
     ##
     # RANDOM TRAIN/TEST SPLITS LOOP
@@ -388,7 +408,7 @@ def main():
 
     ref_scores = defaultdict(lambda: ([], []))  # ([nfeatures], [scores])
     eryn_scores = defaultdict(lambda: ([], []))
-    exec_times = np.zeros((args.nreps, 2))  # (splits, (ref, bayesian))
+    exec_times = np.zeros((args.nreps, 2))  # (splits, (ref, eryn))
 
     try:
         for rep in range(args.nreps):
@@ -398,7 +418,7 @@ def main():
                 x_fd,
                 y,
                 train_size=args.train_size,
-                stratify=None if args.kind == "linear" else y,
+                stratify=None if kind == "linear" else y,
                 random_state=seed + rep,
             )
 
@@ -417,11 +437,15 @@ def main():
             X_train = X_train_fd.data_matrix.reshape(-1, ngrid)
             X_test = X_test_fd.data_matrix.reshape(-1, ngrid)
 
-            # Scale training data for our methods so that SD=1
-            X_train_std_orig = np.std(X_train, axis=0)
-            X_train_scaled = X_train / X_train_std_orig
-            y_train_std_orig = np.std(y_train)
-            y_train_scaled = y_train / y_train_std_orig
+            # Scale training data for our methods
+            if kind == "linear":
+                X_train_std_orig = np.std(X_train, axis=0)
+                X_train_scaled = X_train / X_train_std_orig
+                y_train_std_orig = np.std(y_train)
+                y_train_scaled = y_train / y_train_std_orig
+            else:  # logistic
+                X_train_std_orig = np.std(X_train, axis=0)
+                X_train_scaled = 0.5 * X_train / X_train_std_orig
 
             ##
             # RUN REFERENCE ALGORITHMS
@@ -432,13 +456,13 @@ def main():
 
                 # --- Get reference models
 
-                if args.kind == "linear":
+                if kind == "linear":
                     est_ref = run_utils.get_reference_models_linear(
                         args.nleaves_max, seed + rep
                     )
                 else:
                     est_ref = run_utils.get_reference_models_logistic(
-                        X_train, y_train, seed + rep
+                        args.nleaves_max, seed + rep
                     )
 
                 if args.verbose > 0:
@@ -453,7 +477,7 @@ def main():
                     X_test_fd,
                     y_test,
                     cv_folds,
-                    kind=args.kind,
+                    kind=kind,
                     n_jobs=-1,
                     column_names=[col for col in column_names_split if col != "Noise"],
                     sort_by=sort_by_split,
@@ -462,10 +486,7 @@ def main():
 
                 if args.verbose > 1:
                     print()
-                    print(
-                        df_ref_split.to_string(index=False, col_space=9),
-                        "\n",
-                    )
+                    print(df_ref_split.to_string(index=False, col_space=9), "\n")
 
                 # --- Save score of best models
 
@@ -490,18 +511,28 @@ def main():
 
             # --- Define prior distributions and likelihood
 
-            if args.kind == "linear":
+            if kind == "linear":
                 priors = {
                     "all_models_together": RKHSPriorLinear(
                         theta_space,
-                        sd_beta=sd_prior_beta,
+                        sd_beta=scale_prior_beta,
                         lambda_p=lambda_p,
                         min_dist_tau=MIN_DIST_TAU,
                     )
                 }
                 ll = RKHSLikelihoodLinear(theta_space, X_train_scaled, y_train_scaled)
             else:
-                pass
+                priors = {
+                    "all_models_together": RKHSPriorLogistic(
+                        theta_space,
+                        df_beta=df_prior_beta,
+                        scale_beta=scale_prior_beta,
+                        scale_alpha0=scale_prior_alpha0,
+                        lambda_p=lambda_p,
+                        min_dist_tau=MIN_DIST_TAU,
+                    )
+                }
+                ll = RKHSLikelihoodLogistic(theta_space, X_train_scaled, y_train)
 
             # --- Setup initial values
 
@@ -513,8 +544,9 @@ def main():
                 theta_space,
                 priors["all_models_together"],
                 y_train,  # not scaled
-                y_train_std_orig,
+                y_train_std_orig if kind == "linear" else None,
                 seed + rep,
+                kind=kind,
             )
 
             # --- Setup moves and update functions
@@ -619,9 +651,10 @@ def main():
                 ensemble,
                 theta_space,
                 X_train_std_orig,
-                y_train_std_orig,
+                y_train_std_orig if kind == "linear" else None,
                 T=0,
                 relabel_strategy=relabel_strategy,
+                kind=kind,
             )
 
             # Get values of leaves (number of components) accross the chain
@@ -630,7 +663,7 @@ def main():
 
             # --- Predict on test set
 
-            df_eryn_split = run_utils.compute_eryn_linear_predictions(
+            df_eryn_split = run_utils.compute_eryn_predictions(
                 full_chain_components,
                 full_chain_common,
                 nleaves,
@@ -644,8 +677,9 @@ def main():
                 cv_folds,
                 sort_by_split,
                 RUN_SUMMARY_ALGS,
-                ERYN_PREDICTION_NOISE,
+                args.prediction_noise,
                 seed=seed + rep,
+                kind=kind,
             )
 
             if args.verbose > 1:
@@ -681,7 +715,7 @@ def main():
     ]
     df_metrics_ref = pd.DataFrame(
         mean_scores_ref, columns=column_names_mean
-    ).sort_values("Mean " + score_name, ascending=args.kind == "linear")
+    ).sort_values("Mean " + score_name, ascending=kind == "linear")
 
     mean_scores_eryn = [
         (k, np.mean(v[0]), np.std(v[0]), np.mean(v[1]), np.std(v[1]))
@@ -689,7 +723,7 @@ def main():
     ]
     df_metrics_eryn = pd.DataFrame(
         mean_scores_eryn, columns=column_names_mean
-    ).sort_values("Mean " + score_name, ascending=args.kind == "linear")
+    ).sort_values("Mean " + score_name, ascending=kind == "linear")
 
     ##
     # PRINT RESULTS
@@ -707,7 +741,7 @@ def main():
     else:
         data_name = args.data_name
 
-    if args.kind == "linear":
+    if kind == "linear":
         prefix_kind = "reg"
     else:
         prefix_kind = "clf"
@@ -731,7 +765,7 @@ def main():
         print()  # newline
 
     print(
-        f"*** Bayesian RKHS-based Functional {args.kind.capitalize()} Regression with RJMCMC ***\n"
+        f"*** Bayesian RKHS-based Functional {kind.capitalize()} Regression with RJMCMC ***\n"
     )
 
     print("-- GENERAL INFORMATION --")
@@ -760,7 +794,7 @@ def main():
     else:
         print(f"Real data name: {args.data_name}")
 
-    if args.kind == "logistic":
+    if kind == "logistic":
         print(f"Noise: {2*int(100*args.noise)}%")
 
     print("\n-- BAYESIAN RKHS MODEL --")
@@ -769,9 +803,13 @@ def main():
         "Prior p:",
         f"U[1, {args.nleaves_max}]" if lambda_p is None else f"Poisson({lambda_p})",
     )
-    print(f"Prior beta: N(mu=0, sd={sd_prior_beta})")
+    if kind == "linear":
+        print(f"Prior beta: N(mu=0, sd={scale_prior_beta})")
+    else:
+        print(f"Prior beta: t(df={df_prior_beta}, scale={scale_prior_beta})")
     print("Transform sigma:", TRANSFORM_SIGMA)
     print("Min. distance tau:", MIN_DIST_TAU)
+    print("Prediction noise:", args.prediction_noise)
 
     # --- Print MCMC method information and results
 
@@ -823,7 +861,7 @@ def main():
 
             df_save = pd.concat(df_results_all, axis=0, ignore_index=True)
             df_save = df_save.sort_values(
-                "Mean " + score_name, ascending=args.kind == "linear"
+                "Mean " + score_name, ascending=kind == "linear"
             )
             df_save.to_csv(filepath_save, index=False)
 

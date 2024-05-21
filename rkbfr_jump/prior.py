@@ -3,9 +3,10 @@ Classes that represent the priors of the RKHS model.
 """
 
 import numpy as np
-from eryn.prior import ProbDistContainer
 from numba import njit, prange
-from scipy.stats import norm, uniform
+from scipy.stats import cauchy, norm, t, uniform
+
+from eryn.prior import ProbDistContainer
 
 
 class jeffreys_prior:
@@ -27,36 +28,36 @@ class jeffreys_prior:
 
         Returns
         -------
-        np.ndarray (D1, ..., Dn)
+        np.ndarray (D1, ..., Dn, 1)
             Array of logpdf values.
         """
-        res = np.full(x.shape[:-1], -np.inf)
+        res = np.full(x.shape[:-1] + (1,), -np.inf)
         idx_valid = np.where(
             x[..., self.ts.idx_sigma2] > 0
         )  # identify samples where sigma2 > 0
-        res[idx_valid] = -np.log(
+        res[*idx_valid, 0] = -np.log(
             x[*idx_valid, self.ts.idx_sigma2]
         )  # log P(alpha0, sigma2) ∝ -log(sigma2)
         return res
 
 
 class flat_prior:
-    """Flat prior P(alpha0, log_sigma) ∝ 1"""
+    """Flat prior P(x) ∝ 1"""
 
     def logpdf(self, x: np.ndarray) -> np.ndarray:
-        """Compute log P(alpha0, sigma2) under flat prior.
+        """Compute log P(x) under flat prior.
 
         Parameters
         ----------
-        x : np.ndarray (D1, ..., Dn, 2)
+        x : np.ndarray (D1, ..., Dn, Dn+1)
             Input array.
 
         Returns
         -------
-        np.ndarray (D1, ..., Dn)
+        np.ndarray (D1, ..., Dn, 1)
             Array of logpdf values.
         """
-        return np.zeros_like(x.shape[:-1])  # log P(alpha0, sigma2) ∝ -log(1) = 0
+        return np.zeros(x.shape[:-1] + (1,))  # log P(x) ∝ -log(1) = 0
 
 
 def uniform_dist(a, b):
@@ -145,7 +146,7 @@ class RKHSPriorLinear:
 
         # Compute logpdf for alpha0 and sigma2
         lp_alpha0_sigma2 = self.prior_alpha0_sigma2.logpdf(alpha0_sigma2)[
-            ..., 0
+            ..., 0, 0
         ]  # (ntemps, nwalkers)
 
         # Do not allow very close values of tau on the same branch
@@ -159,6 +160,111 @@ class RKHSPriorLinear:
         lp_tau[~inds["components"]] = 0.0
 
         return lp_beta.sum(axis=-1) + lp_tau.sum(axis=-1) + lp_alpha0_sigma2
+
+    def rvs(self, size, coords=None, inds=None):
+        """arguments coords and inds are present for compatibility"""
+
+        if isinstance(size, tuple) or isinstance(size, np.ndarray):
+            size_tuple = tuple(size)
+        else:
+            size_tuple = (size,)
+
+        out = np.zeros(size_tuple + (2,))
+
+        # Only generate samples for the RJ moves (b and t)
+        out[..., self.ts.idx_beta] = self.prior_beta.rvs(size=size)
+        out[..., self.ts.idx_tau] = self.prior_tau.rvs(size=size)
+
+        return out
+
+
+class RKHSPriorLogistic:
+    """Simple prior where all parameters are independent"""
+
+    def __init__(
+        self,
+        theta_space,
+        df_beta=5,
+        scale_beta=2.5,
+        scale_alpha0=10,
+        lambda_p=None,
+        min_dist_tau=1,
+    ):
+        # Indices in the coords array
+        self.ts = theta_space
+
+        # Prior on p
+        self.lambda_p = lambda_p
+
+        # Independent priors
+        self.prior_beta = t(df=df_beta, scale=scale_beta)  # norm(0, sd_beta)
+        self.prior_tau = uniform_dist(self.ts.grid.min(), self.ts.grid.max())
+        self.prior_alpha0 = cauchy(scale=scale_alpha0)
+
+        # Other information
+        self.df_beta = df_beta
+        self.scale_beta = scale_beta
+        self.scale_alpha0 = scale_alpha0
+        self.min_dist_tau = min_dist_tau
+
+        # Eryn-compatible prior container (would not be possible if our prior was more complex)
+        self.container = {
+            "components": ProbDistContainer(
+                {
+                    theta_space.idx_beta: self.prior_beta,
+                    theta_space.idx_tau: self.prior_tau,
+                }
+            ),
+            "common": ProbDistContainer({theta_space.idx_alpha0: self.prior_alpha0}),
+        }
+
+    def logpmf_rate_p(self, p):
+        """Compute log(P(p)/P(p-1)) using the prior on p."""
+        if self.lambda_p is None:  # uniform distribution
+            return np.zeros_like(p)  # np.log(1)=0
+
+        # P(p) = \lambda^p/Cp!, with C a constant
+        return np.log(self.lambda_p / p)
+
+    def logpdf_components(self, coords_components, inds_components=None):
+        # Get current values of theta
+        beta = coords_components[..., self.ts.idx_beta]
+        tau = coords_components[..., self.ts.idx_tau]
+
+        if inds_components is not None:
+            beta = beta[inds_components]
+            tau = tau[inds_components]
+
+        # Compute logpdf for beta and tau
+        lp_beta = self.prior_beta.logpdf(beta)
+        lp_tau = self.prior_tau.logpdf(tau)
+
+        return lp_beta + lp_tau
+
+    def logpdf(self, coords, inds, supps=None, branch_supps=None):
+        # Get current values of theta
+        beta = coords["components"][..., self.ts.idx_beta]
+        tau = coords["components"][..., self.ts.idx_tau]
+        alpha0 = coords["common"]
+
+        # Compute logpdf for beta and tau
+        lp_beta = self.prior_beta.logpdf(beta)  # (ntemps, nwalkers, nleaves_max)
+        lp_tau = self.prior_tau.logpdf(tau)  # (ntemps, nwalkers, nleaves_max)
+
+        # Compute logpdf for alpha0
+        lp_alpha0 = self.prior_alpha0.logpdf(alpha0)[..., 0, 0]  # (ntemps, nwalkers)
+
+        # Do not allow very close values of tau on the same branch
+        idx_valid = check_valid_t(
+            self.ts.get_idx_tau_grid(tau), inds["components"], self.min_dist_tau
+        )
+        lp_tau[~idx_valid] = -1e300  # -np.inf fails for MT computations
+
+        # Turn off contribution of inactive leaves
+        lp_beta[~inds["components"]] = 0.0
+        lp_tau[~inds["components"]] = 0.0
+
+        return lp_beta.sum(axis=-1) + lp_tau.sum(axis=-1) + lp_alpha0
 
     def rvs(self, size, coords=None, inds=None):
         """arguments coords and inds are present for compatibility"""

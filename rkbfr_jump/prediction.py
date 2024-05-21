@@ -1,10 +1,20 @@
 import numpy as np
+from scipy.special import expit
 
+from .utils.simulation_utils import apply_threshold, probability_to_label
 from .utils.utility import IgnoreWarnings
 
 
 def predict_pp(
-    chain_components, chain_common, theta_space, X_test, aggregate_pp=None, noise=False
+    chain_components,
+    chain_common,
+    theta_space,
+    X_test,
+    aggregate_pp=None,
+    noise=False,
+    kind="linear",
+    threshold=0.5,
+    convert_prob_to_label=True,
 ):
     # Replace NaN with 0.0 to "turn off" the corresponding coefficients of beta
     chain_components = np.nan_to_num(chain_components, nan=0.0)
@@ -25,12 +35,14 @@ def predict_pp(
         alpha0 + (X_idx @ beta).squeeze()
     )  # result is (nsteps, nwalkers, nfuncs)
 
-    if noise:
+    if kind == "logistic":
+        y_pred_all = expit(y_pred_all)  # Compute probabilities
+
+    if kind == "linear" and noise:
         sigma2 = chain_common[..., theta_space.idx_sigma2, None]
         y_pred_all += np.sqrt(sigma2) * np.random.standard_normal(y_pred_all.shape)
 
     # Summary of pp
-
     if aggregate_pp is not None:
         y_pred_all = aggregate_pp(
             y_pred_all.reshape(
@@ -38,6 +50,14 @@ def predict_pp(
             ),  # bring together all (nsteps, nwalkers)
             axis=0,
         )
+
+    if (
+        kind == "logistic" and convert_prob_to_label
+    ):  # y_pred_all are probabilities of Y=1
+        if noise:
+            y_pred_all = probability_to_label(y_pred_all)
+        else:
+            y_pred_all = apply_threshold(y_pred_all, threshold)
 
     return y_pred_all
 
@@ -49,6 +69,8 @@ def predict_weighted(
     predict_fn,
     kwargs_predict_fn,
     add_p_kwarg=False,
+    noise_logistic=False,
+    threshold=0.5,
 ):
     nsteps, nwalkers, nleaves_max = chain_components.shape[:3]
     nsamples_total = nwalkers * nsteps
@@ -75,6 +97,13 @@ def predict_weighted(
 
     preds = np.average(preds_by_p, weights=weights_by_p, axis=0)
 
+    if kwargs_predict_fn["kind"] == "logistic":
+        # preds are probabilities of Y=1
+        if noise_logistic:
+            preds = probability_to_label(preds)
+        else:
+            preds = apply_threshold(preds, threshold)
+
     return preds
 
 
@@ -86,15 +115,25 @@ def predict_weighted_pp(
     X_test,
     aggregate_pp,
     noise=False,
+    threshold=0.5,
+    kind="linear",
 ):
     kwargs_predict_pp = {
         "theta_space": theta_space,
         "X_test": X_test,
         "aggregate_pp": aggregate_pp,
         "noise": noise,
+        "kind": kind,
+        "convert_prob_to_label": False,
     }
     preds = predict_weighted(
-        chain_components, chain_common, nleaves, predict_pp, kwargs_predict_pp
+        chain_components,
+        chain_common,
+        nleaves,
+        predict_pp,
+        kwargs_predict_pp,
+        threshold=threshold,
+        noise_logistic=noise,
     )
 
     return preds
@@ -109,6 +148,8 @@ def predict_map_pp(
     X_test,
     aggregate_pp,
     noise=False,
+    threshold=0.5,
+    kind="linear",
 ):
     chain_components_p = chain_components[nleaves == map_p]
     chain_common_p = chain_common[nleaves == map_p]
@@ -119,13 +160,23 @@ def predict_map_pp(
         X_test,
         aggregate_pp,
         noise=noise,
+        kind=kind,
+        threshold=threshold,
     )
 
     return preds
 
 
 def predict_pe(
-    chain_components_p, chain_common_p, p, theta_space, X_test, summary_statistic
+    chain_components_p,
+    chain_common_p,
+    p,
+    theta_space,
+    X_test,
+    summary_statistic,
+    threshold=0.5,
+    kind="linear",
+    convert_prob_to_label=True,
 ):  # predict point_estimate
     """chain_components_p is of shape (*, nleaves_max, 2), i.e.,
     already flattened on the (nsteps, nwalkers) dimension."""
@@ -143,6 +194,12 @@ def predict_pe(
     X_idx = X_test[:, idx_tau_grid]
     y_pred_all = alpha0 + X_idx @ beta  # result is (nfunc,)
 
+    if kind == "logistic":
+        y_pred_all = expit(y_pred_all)
+
+    if kind == "logistic" and convert_prob_to_label:
+        y_pred_all = apply_threshold(y_pred_all, threshold)
+
     return y_pred_all
 
 
@@ -153,11 +210,16 @@ def predict_weighted_summary(
     theta_space,
     X_test,
     summary_statistic,
+    kind="linear",
+    threshold=0.5,
 ):
     kwargs_predict_pe = {
         "theta_space": theta_space,
         "X_test": X_test,
         "summary_statistic": summary_statistic,
+        "kind": kind,
+        "convert_prob_to_label": False,
+        "threshold": threshold,
     }
     preds = predict_weighted(
         chain_components,
@@ -166,6 +228,7 @@ def predict_weighted_summary(
         predict_pe,
         kwargs_predict_pe,
         add_p_kwarg=True,
+        noise_logistic=False,
     )
 
     return preds
@@ -179,6 +242,8 @@ def predict_map_summary(
     theta_space,
     X_test,
     summary_statistic,
+    kind="linear",
+    threshold=0.5,
 ):
     chain_components_p = chain_components[nleaves == map_p]
     chain_common_p = chain_common[nleaves == map_p]
@@ -189,6 +254,8 @@ def predict_map_summary(
         theta_space,
         X_test,
         summary_statistic,
+        kind=kind,
+        threshold=threshold,
     )
 
     return preds
@@ -203,7 +270,8 @@ def predict_vs(
     y_train,
     X_test,
     summary_statistic,
-    reg,
+    finite_estimator,
+    kind="linear",  # for compatibility
 ):  # predict variable_selection
     """chain_components_p is of shape (*, nleaves_max, 2), i.e.,
     already flattened on the (nsteps, nwalkers) dimension."""
@@ -217,8 +285,8 @@ def predict_vs(
     )  # idx is at most (p,), sorted for convenience
 
     with IgnoreWarnings():
-        reg.fit(X_train[:, idx_tau_grid], y_train)
-    y_pred = reg.predict(X_test[:, idx_tau_grid])
+        finite_estimator.fit(X_train[:, idx_tau_grid], y_train)
+    y_pred = finite_estimator.predict(X_test[:, idx_tau_grid])
 
     return y_pred
 
@@ -232,7 +300,8 @@ def predict_weighted_variable_selection(
     y_train,
     X_test,
     summary_statistic,
-    reg,
+    finite_estimator,
+    kind="linear",  # for compatibility
 ):
     kwargs_predict_vs = {
         "theta_space": theta_space,
@@ -240,7 +309,8 @@ def predict_weighted_variable_selection(
         "y_train": y_train,
         "X_test": X_test,
         "summary_statistic": summary_statistic,
-        "reg": reg,
+        "finite_estimator": finite_estimator,
+        "kind": kind,
     }
     preds = predict_weighted(
         chain_components,
@@ -249,6 +319,7 @@ def predict_weighted_variable_selection(
         predict_vs,
         kwargs_predict_vs,
         add_p_kwarg=True,
+        noise_logistic=False,
     )
 
     return preds
@@ -264,7 +335,8 @@ def predict_map_variable_selection(
     y_train,
     X_test,
     summary_statistic,
-    reg,
+    finite_estimator,
+    kind="linear",  # for compatibility
 ):
     chain_components_p = chain_components[nleaves == map_p]
     chain_common_p = chain_common[nleaves == map_p]
@@ -277,7 +349,7 @@ def predict_map_variable_selection(
         y_train,
         X_test,
         summary_statistic,
-        reg,
+        finite_estimator,
     )
 
     return preds

@@ -7,13 +7,15 @@ from numba import njit
 
 
 class ThetaSpace:
-    def __init__(self, grid, names, idx, transform_sigma):
+    def __init__(self, grid, names, idx, transform_sigma=False):
         self.grid = grid
         self.names = names
         self.idx_beta = idx[0]
         self.idx_tau = idx[1]
         self.idx_alpha0 = idx[2]
-        self.idx_sigma2 = idx[3]
+
+        if len(names) > 3:
+            self.idx_sigma2 = idx[3]
         self.transform_sigma = transform_sigma
 
     def get_idx_tau_grid(self, tau, add_dimension=True):
