@@ -42,7 +42,8 @@ class IgnoreWarnings:
 
 # Compute the "mode" of a continuous kde
 def mode_kde(arr):
-    if len(arr) == 1:
+    # If only one value, that value is the mode
+    if np.allclose(arr, arr[0]):
         return arr[0]
 
     x, density = az.kde(arr)

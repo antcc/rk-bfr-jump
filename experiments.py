@@ -50,8 +50,8 @@ pd.set_option("display.max_columns", 80)
 pd.set_option("styler.format.precision", 4)
 
 # I/O behavior
-PRINT_TO_FILE = True
-SAVE_RESULTS = True
+PRINT_TO_FILE = False
+SAVE_RESULTS = False
 PRINT_PATH = "results/scores/"
 SAVE_PATH = PRINT_PATH
 
