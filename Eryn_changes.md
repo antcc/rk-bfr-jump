@@ -1,3 +1,5 @@
+These changes should be made to the source code of Eryn 1.1.7 for our package to work correctly.
+
 - [backend.py] Add "axis=2" to the squeeze logic when there are no multiple leaves [744]. Change the text in gelman_rubin_diagnostic (can be ignored in final version) [763/722]
 - [combine.py] Add accepted.copy() in @setter of CombineMove, so that the initial accepted arrays (zeros) are independent for each move. [48/48]
 - [group.py] The condition should be only self.iter == 0 [133/134]
