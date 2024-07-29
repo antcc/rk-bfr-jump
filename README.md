@@ -2,7 +2,7 @@
 
 A Bayesian framework for functional linear and logistic regression models, based on the theory of RKHS's, that leverages the capabilities of reversible jump MCMC samplers. An overview of the models and some experiments are available in Sections 2 and 4 of [this article](https://arxiv.org/abs/2312.14086).
 
-The reversible jump samplers use an implementation from the [Eryn](https://emcee.readthedocs.io/) library, with very minor tweaks to its source code. See `Eryn_changes.md` for a summary of the changes.
+The reversible jump samplers use an implementation from the [Eryn](https://emcee.readthedocs.io/) library, with speed improvements thanks to parallelization with [numba](https://numba.readthedocs.io/en/stable/). There are very minor tweaks to Eryn's source code; see `Eryn_changes.md` for a summary of the changes.
 
 ## Code structure
 
