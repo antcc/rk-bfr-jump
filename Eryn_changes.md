@@ -1,4 +1,4 @@
 - [backend.py] Add "axis=2" to the squeeze logic when there are no multiple leaves [744]. Change the text in gelman_rubin_diagnostic (can be ignored in final version) [763/722]
 - [combine.py] Add accepted.copy() in @setter of CombineMove, so that the initial accepted arrays (zeros) are independent for each move. [48/48]
 - [group.py] The condition should be only self.iter == 0 [133/134]
-- [ensemble.py] Remove the updating_fn logic in run_mcmc method after burn-in (it is already included in sample).
+- [ensemble.py] Remove the update_fn logic in run_mcmc method after burn-in (it is already included in the sample method).

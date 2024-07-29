@@ -1,7 +1,9 @@
 .ipynb_checkpoints/
 _*.md
 __pycache__/
-results/
+results/*
+!results/scores/
+!results/scores/*
 release/
 eryn/
 data/

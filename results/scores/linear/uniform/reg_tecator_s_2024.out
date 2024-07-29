@@ -1,0 +1,75 @@
+*** Bayesian RKHS-based Functional Linear Regression with RJMCMC ***
+
+-- GENERAL INFORMATION --
+Random seed: 2024
+Train/test splits: 10
+
+-- DATASET GENERATION --
+Total samples: 193
+Train size: 128
+Grid size: 100
+Real data name: tecator
+
+-- BAYESIAN RKHS MODEL --
+Max. number of components (p): 10
+Prior p: U[1, 10]
+Prior beta: N(mu=0, sd=5)
+Transform sigma: True
+Min. distance tau: 1
+
+-- ERYN SAMPLER --
+Walkers: 64
+Temps: 10
+Burn: 4000
+Steps: 1000
+Num try: 2
+
+-- RESULTS REFERENCE METHODS --
+Mean split execution time: 384.085±4.954 s
+Total execution time: 64.014 min
+
+   Estimator  Mean features  SD features  Mean RMSE  SD RMSE
+   pls+ridge            9.3       1.4177     2.5357   0.2360
+manual+ridge            9.1       0.3000     2.5858   0.2697
+  fpls+ridge            4.2       2.4000     2.5948   0.2489
+       fpls1            4.1       2.2113     2.6048   0.2616
+        pls1            7.9       1.8138     2.6057   0.2832
+        apls            6.8       0.9798     2.6415   0.1646
+  fpca+ridge            7.7       0.9000     2.6571   0.1889
+   pca+ridge            7.6       1.0198     2.7117   0.1830
+       lasso           61.0       5.1186     2.8419   0.3518
+        flin            6.0       0.0000     7.4864   0.6476
+
+-- RESULTS ERYN METHODS--
+Mean split execution time: 884.971±14.304 s
+Total execution time: 147.495 min
+
+          Estimator  Mean features  SD features  Mean RMSE  SD RMSE
+    w_vs_mode+ridge           10.0       0.0000     2.7130   0.2545
+          w_pp_mode           10.0       0.0000     2.7178   0.2664
+      map_pp_median            7.3       0.6403     2.7197   0.2669
+          pp_median           10.0       0.0000     2.7201   0.2622
+           pp_tmean           10.0       0.0000     2.7203   0.2608
+          w_pp_mean           10.0       0.0000     2.7206   0.2590
+        w_pp_median           10.0       0.0000     2.7207   0.2621
+         w_pp_tmean           10.0       0.0000     2.7209   0.2604
+            pp_mean           10.0       0.0000     2.7212   0.2601
+        map_pp_mean            7.3       0.6403     2.7231   0.2662
+       map_pp_tmean            7.3       0.6403     2.7238   0.2666
+            pp_mode           10.0       0.0000     2.7354   0.2548
+        map_pp_mode            7.3       0.6403     2.7406   0.2715
+  w_vs_median+ridge           10.0       0.0000     2.8015   0.2606
+   w_vs_tmean+ridge           10.0       0.0000     2.8220   0.3229
+map_vs_median+ridge            7.3       0.6403     2.8258   0.2692
+  map_vs_mode+ridge            7.3       0.6403     2.8330   0.2909
+    w_vs_mean+ridge           10.0       0.0000     2.8349   0.2857
+  map_vs_mean+ridge            7.3       0.6403     2.8980   0.3754
+ map_vs_tmean+ridge            7.3       0.6403     2.9003   0.4027
+   w_summary_median           10.0       0.0000     5.6387   1.8091
+ map_summary_median            7.3       0.6403     8.7438   3.5407
+    w_summary_tmean           10.0       0.0000     9.7708   3.1970
+  map_summary_tmean            7.3       0.6403    10.2347   3.5038
+     w_summary_mean           10.0       0.0000    11.3901   2.9923
+   map_summary_mean            7.3       0.6403    11.5368   3.0860
+     w_summary_mode           10.0       0.0000    13.1094   7.2005
+   map_summary_mode            7.3       0.6403    22.4231  13.1075

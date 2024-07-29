@@ -1,0 +1,85 @@
+*** Bayesian RKHS-based Functional Logistic Regression with RJMCMC ***
+
+-- GENERAL INFORMATION --
+Random seed: 2024
+Train/test splits: 10
+
+-- DATASET GENERATION --
+Total samples: 300
+Train size: 200
+Grid size: 100
+X ~ GP(0, fractional_brownian_kernel)
+Model type: RKHS
+Noise: 10%
+
+-- BAYESIAN RKHS MODEL --
+Max. number of components (p): 10
+Prior p: Poisson(3)
+Prior beta: t(df=5, scale=2.5)
+Transform sigma: True
+Min. distance tau: 1
+Prediction noise: False
+
+-- ERYN SAMPLER --
+Walkers: 64
+Temps: 10
+Burn: 4000
+Steps: 1000
+Num try: 1
+
+-- RESULTS REFERENCE METHODS --
+Mean split execution time: 249.971±5.302 s
+Total execution time: 41.662 min
+
+ Estimator  Mean features  SD features  Mean Acc  SD Acc
+manual+log            8.4       1.5620     0.850  0.0118
+       log          100.0       0.0000     0.848  0.0154
+       fnc          100.0       0.0000     0.848  0.0140
+  fpca+log            2.1       1.5133     0.847  0.0142
+   apls+nc            1.4       0.4899     0.847  0.0142
+   pca+log            1.8       1.1662     0.847  0.0162
+  apls+log            1.3       0.4583     0.844  0.0120
+   pls+log            3.2       1.8868     0.844  0.0206
+   pca+qda            1.6       0.6633     0.840  0.0184
+  rkvs+log            5.9       2.7731     0.838  0.0256
+      flog            1.1       0.3000     0.837  0.0237
+      fknn          100.0       0.0000     0.834  0.0273
+      flda            2.3       0.6403     0.830  0.0286
+    pls+nc            1.8       0.4000     0.828  0.0223
+       mdc          100.0       0.0000     0.822  0.0218
+       lda          100.0       0.0000     0.621  0.0659
+       qda          100.0       0.0000     0.510  0.0000
+
+-- RESULTS ERYN METHODS--
+Mean split execution time: 450.400±10.827 s
+Total execution time: 75.067 min
+
+         Estimator  Mean features  SD features  Mean Acc  SD Acc
+   w_summary_tmean            9.6       0.4899     0.847  0.0173
+         w_pp_mean            9.6       0.4899     0.847  0.0110
+       w_pp_median            9.6       0.4899     0.847  0.0110
+         w_pp_mode            9.6       0.4899     0.847  0.0119
+       map_pp_mean            2.0       0.0000     0.847  0.0142
+           pp_mean            9.6       0.4899     0.847  0.0110
+       map_pp_mode            2.0       0.0000     0.846  0.0143
+ map_summary_tmean            2.0       0.0000     0.846  0.0174
+         pp_median            9.6       0.4899     0.846  0.0102
+           pp_mode            9.6       0.4899     0.846  0.0128
+        w_pp_tmean            9.6       0.4899     0.846  0.0111
+          pp_tmean            9.6       0.4899     0.846  0.0111
+map_summary_median            2.0       0.0000     0.845  0.0220
+      map_pp_tmean            2.0       0.0000     0.845  0.0128
+  w_summary_median            9.6       0.4899     0.845  0.0191
+    w_summary_mean            9.6       0.4899     0.845  0.0186
+  map_summary_mean            2.0       0.0000     0.844  0.0169
+     map_pp_median            2.0       0.0000     0.844  0.0128
+   w_vs_median+log            9.6       0.4899     0.844  0.0169
+    w_vs_tmean+log            9.6       0.4899     0.840  0.0167
+ map_vs_median+log            2.0       0.0000     0.839  0.0192
+  map_vs_tmean+log            2.0       0.0000     0.838  0.0232
+   map_vs_mean+log            2.0       0.0000     0.836  0.0211
+  map_summary_mode            2.0       0.0000     0.835  0.0258
+     w_vs_mean+log            9.6       0.4899     0.833  0.0205
+    w_summary_mode            9.6       0.4899     0.832  0.0227
+   map_vs_mode+log            2.0       0.0000     0.831  0.0221
+     w_vs_mode+log            9.6       0.4899     0.828  0.0194

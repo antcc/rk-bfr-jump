@@ -1,0 +1,76 @@
+*** Bayesian RKHS-based Functional Linear Regression with RJMCMC ***
+
+-- GENERAL INFORMATION --
+Random seed: 2024
+Train/test splits: 10
+
+-- DATASET GENERATION --
+Total samples: 300
+Train size: 200
+Grid size: 100
+X ~ GP(0, brownian_kernel)
+Model type: RKHS
+
+-- BAYESIAN RKHS MODEL --
+Max. number of components (p): 10
+Prior p: Poisson(3)
+Prior beta: N(mu=0, sd=5)
+Transform sigma: True
+Min. distance tau: 1
+
+-- ERYN SAMPLER --
+Walkers: 64
+Temps: 10
+Burn: 4000
+Steps: 1000
+Num try: 1
+
+-- RESULTS REFERENCE METHODS --
+Mean split execution time: 179.871±8.870 s
+Total execution time: 29.978 min
+
+   Estimator  Mean features  SD features  Mean RMSE  SD RMSE
+       lasso           17.7       8.2710     0.6801   0.0436
+        apls           10.0       0.0000     0.8748   0.0535
+   pls+ridge           10.0       0.0000     0.9957   0.0563
+        pls1           10.0       0.0000     0.9973   0.0512
+manual+ridge            6.0       0.0000     1.3417   0.1302
+  fpca+ridge           10.0       0.0000     1.5119   0.0709
+   pca+ridge           10.0       0.0000     1.5210   0.0703
+  fpls+ridge           10.0       0.0000     1.6074   0.0784
+       fpls1           10.0       0.0000     1.6074   0.0781
+        flin            8.7       0.4583     1.8287   0.0734
+
+-- RESULTS ERYN METHODS--
+Mean split execution time: 269.061±17.652 s
+Total execution time: 44.844 min
+
+          Estimator  Mean features  SD features  Mean RMSE  SD RMSE
+    w_vs_mode+ridge            6.9       0.5385     0.6678   0.0398
+  map_vs_mode+ridge            3.0       0.0000     0.6678   0.0397
+map_vs_median+ridge            3.0       0.0000     0.6678   0.0397
+  map_vs_mean+ridge            3.0       0.0000     0.6678   0.0397
+ map_vs_tmean+ridge            3.0       0.0000     0.6678   0.0397
+  w_vs_median+ridge            6.9       0.5385     0.6679   0.0391
+        w_pp_median            6.9       0.5385     0.6681   0.0432
+         w_pp_tmean            6.9       0.5385     0.6681   0.0434
+           pp_tmean            6.9       0.5385     0.6682   0.0432
+          w_pp_mean            6.9       0.5385     0.6682   0.0432
+          pp_median            6.9       0.5385     0.6683   0.0431
+            pp_mean            6.9       0.5385     0.6684   0.0434
+   map_summary_mean            3.0       0.0000     0.6694   0.0424
+        map_pp_mean            3.0       0.0000     0.6694   0.0425
+            pp_mode            6.9       0.5385     0.6694   0.0440
+ map_summary_median            3.0       0.0000     0.6694   0.0425
+       map_pp_tmean            3.0       0.0000     0.6694   0.0425
+  map_summary_tmean            3.0       0.0000     0.6695   0.0430
+      map_pp_median            3.0       0.0000     0.6698   0.0427
+          w_pp_mode            6.9       0.5385     0.6699   0.0406
+        map_pp_mode            3.0       0.0000     0.6716   0.0413
+   map_summary_mode            3.0       0.0000     0.7196   0.0541
+   w_summary_median            6.9       0.5385     0.7344   0.0702
+   w_vs_tmean+ridge            6.9       0.5385     0.7955   0.0689
+    w_summary_tmean            6.9       0.5385     0.8308   0.0736
+    w_vs_mean+ridge            6.9       0.5385     0.9662   0.0910
+     w_summary_mean            6.9       0.5385     1.0149   0.0997
+     w_summary_mode            6.9       0.5385     1.1020   0.3179
