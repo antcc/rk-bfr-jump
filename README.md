@@ -1,6 +1,6 @@
 # rk-bfr-jump
 
-A Bayesian framework for functional linear and logistic regression models, based on the theory of RKHS's, that leverages the capabilities of reversible jump MCMC samplers. An overview of the models and some experiments are available in Sections 2 and 4 of [this accompanying article](https://arxiv.org/pdf/2312.14086).
+A Bayesian framework for functional linear and logistic regression models, based on the theory of RKHS's, that leverages the capabilities of reversible jump MCMC samplers. An overview of the models and some experiments are available in Sections 2 and 4 of [this accompanying article](https://arxiv.org/abs/2312.14086).
 
 The reversible jump samplers use an implementation from the [Eryn](https://emcee.readthedocs.io/) library, with very minor tweaks to its source code. See `Eryn_changes.md` for a summary of the changes.
 
