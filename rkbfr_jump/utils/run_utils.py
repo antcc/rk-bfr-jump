@@ -546,7 +546,7 @@ def logistic_regression_comparison_suite(
     FUNCTIONAL MODELS
     """
 
-    # Functional logistic regression (Berrendero et al. 2021)
+    # Functional logistic regression (Berrendero et al. 2023)
     classifiers.append(("flog", Pipeline([("clf", FLR())]), params_flr))
 
     # FLDA (based on PLS1 regression, see Preda and Saporta 2007)

@@ -197,7 +197,7 @@ class RKHSPriorLogistic:
         self.lambda_p = lambda_p
 
         # Independent priors
-        self.prior_beta = t(df=df_beta, scale=scale_beta)  # norm(0, sd_beta)
+        self.prior_beta = t(df=df_beta, scale=scale_beta)
         self.prior_tau = uniform_dist(self.ts.grid.min(), self.ts.grid.max())
         self.prior_alpha0 = cauchy(scale=scale_alpha0)
 

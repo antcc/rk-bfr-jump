@@ -243,7 +243,7 @@ def plot_tempered_posterior_p(ntemps, nleaves_all_T, nleaves_max, colors):
 
     for temp, ax_t in enumerate(ax):
         color = colors(temp / ntemps)
-        ax_t.set_title(f"T = {temp}")
+        ax_t.set_title(f"T = {temp+1}")
         ax_t.set_xlabel("p")
         ax_t.set_xticks(np.arange(nleaves_max + 1))
         ax_t.hist(
@@ -265,7 +265,11 @@ def triangular_plot_components(
     figsize=(10, 7),
 ):
     fig = plt.figure(figsize=figsize)
-    fig.suptitle(f"Posterior distribution of {var_name}", fontweight="semibold")
+    if var_name == "t":
+        var_name_title = "$\\boldsymbol{\\tau}$"
+    else:
+        var_name_title = var_name
+    fig.suptitle(rf"Posterior distribution of {var_name_title}", fontweight="semibold")
 
     # Get effective range of p
     min_p, max_p = np.min(nleaves), np.max(nleaves)
@@ -346,11 +350,12 @@ def posterior_plot_common(
 
     if plot_sigma2:
         fig.suptitle(
-            "Posterior distribution of alpha0 and sigma2", fontweight="semibold"
+            r"Posterior distribution of $\boldsymbol{\alpha}_0$ and $\boldsymbol{\sigma}^2$",
+            fontweight="semibold",
         )
     else:
         fig.suptitle(
-            "Posterior distribution of alpha0",
+            r"Posterior distribution of $\boldsymbol{\alpha}_0$",
             fontweight="semibold",
             horizontalalignment="right",
         )
@@ -360,7 +365,7 @@ def posterior_plot_common(
 
     # Row and column names
     row_names = [f"p={p}" for p in np.arange(min_p, max_p + 1)]
-    column_names = ["alpha0", "sigma2"] if plot_sigma2 else ["alpha0"]
+    column_names = [r"$\alpha_0$", r"$\sigma^2$"] if plot_sigma2 else [r"$\alpha_0$"]
 
     # Record MAP value of p
     map_p = mode_discrete(nleaves, axis=None).mode
@@ -422,6 +427,7 @@ def plot_flat_posterior(
     samples_vars, theta_space, colors, ref_values=None, plot_sigma2=True
 ):
     fig, axs = plt.subplots(2, 2, figsize=(9, 5))
+    # plt.subplots_adjust(hspace=0.3)
 
     if not plot_sigma2:
         fig.delaxes(axs[1, 1])
@@ -431,8 +437,15 @@ def plot_flat_posterior(
     ):
         ax = axs[i // 2, i % 2]
 
+        if var == "t":
+            var = "$\\tau$"
+        elif var == "alpha0":
+            var = "$\\alpha_0$"
+        elif var == "sigma2":
+            var = "$\\sigma^2$"
+
         # Set title and ticks
-        ax.set_title(f"All samples of {var}", fontsize=10)
+        ax.set_title(rf"All samples of {var}", fontsize=10)
         ax.set_yticks([])  # Hide y-axis ticks
         ax.set_yticklabels([])  # Hide y-axis labels
 
@@ -505,11 +518,16 @@ def plot_prediction_results(
             label="Reference methods",
             s=20,
         )
+        label_freg = (
+            r"Standard $L^2$ linear regression"
+            if kind == "linear"
+            else "Alternative functional logistic regression"
+        )
         axs[0].scatter(
             df_reference_flin[score],
             df_reference_flin["Estimator"],
             color="tab:red",
-            label=f"Standard $L^2$ {kind} regression",
+            label=label_freg,
             s=20,
         )
         axs[0].axvline(
@@ -575,6 +593,7 @@ def plot_ppc(
     fig, ax = plt.subplots(figsize=figsize)
     ax.set_title(
         f"Posterior predictive distribution for {'X_test' if is_test_data else 'X'}",
+        fontsize=14,
     )
 
     with warnings.catch_warnings():

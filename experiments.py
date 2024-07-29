@@ -174,7 +174,7 @@ def get_arg_parser():
     parser.add_argument(
         "--scale-prior-beta",
         type=float,
-        default=5,
+        default=2.5,
         help="Scale for the vague prior on beta",
     )
     parser.add_argument(
@@ -194,7 +194,7 @@ def get_arg_parser():
         "--prediction-noise",
         action="store_true",
         help="whether to include noise in the predictions: add the value of sigma2"
-        " in the linear case or sample from a Bernouilli in the logistic case",
+        " in the linear case or sample from a Bernoulli in the logistic case",
     )
 
     # Optional misc. arguments
