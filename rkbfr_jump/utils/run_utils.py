@@ -359,6 +359,41 @@ def linear_regression_comparison_suite(
     return regressors
 
 
+def get_reference_models_logistic(max_n_components, seed):
+    Cs = np.logspace(-4, 4, 20)
+    n_components = np.arange(max_n_components) + 1
+    n_neighbors = [3, 5, 7, 9, 11, 13]
+
+    pls_regressors = [PLSRegressionWrapper(n_components=p) for p in n_components]
+
+    params_clf = {"clf__C": Cs}
+    params_select = {"selector__p": n_components}
+    params_dim_red = {"dim_red__n_components": n_components}
+    params_var_sel = {"var_sel__n_features_to_select": n_components}
+    params_flr = {"clf__max_features": n_components}
+    params_knn = {
+        "clf__n_neighbors": n_neighbors,
+        "clf__weights": ["uniform", "distance"],
+    }
+    params_depth = {"clf__depth_method": [ModifiedBandDepth(), IntegratedDepth()]}
+    # params_mrmr = {"var_sel__method": ["MID", "MIQ"]}
+    params_base_regressors_pls = {"clf__base_regressor": pls_regressors}
+
+    classifiers = logistic_regression_comparison_suite(
+        params_clf,
+        params_base_regressors_pls,
+        params_select,
+        params_dim_red,
+        params_var_sel,
+        params_depth,
+        params_knn,
+        params_flr,
+        random_state=seed,
+    )
+
+    return classifiers
+
+
 def logistic_regression_comparison_suite(
     params_clf,
     params_base_regressors_pls,
@@ -570,41 +605,6 @@ def logistic_regression_comparison_suite(
 
     # Nearest Centroid Functional Classification
     classifiers.append(("fnc", Pipeline([("clf", FNC())]), {}))
-
-    return classifiers
-
-
-def get_reference_models_logistic(max_n_components, seed):
-    Cs = np.logspace(-4, 4, 20)
-    n_components = np.arange(max_n_components) + 1
-    n_neighbors = [3, 5, 7, 9, 11, 13]
-
-    pls_regressors = [PLSRegressionWrapper(n_components=p) for p in n_components]
-
-    params_clf = {"clf__C": Cs}
-    params_select = {"selector__p": n_components}
-    params_dim_red = {"dim_red__n_components": n_components}
-    params_var_sel = {"var_sel__n_features_to_select": n_components}
-    params_flr = {"clf__max_features": n_components}
-    params_knn = {
-        "clf__n_neighbors": n_neighbors,
-        "clf__weights": ["uniform", "distance"],
-    }
-    params_depth = {"clf__depth_method": [ModifiedBandDepth(), IntegratedDepth()]}
-    # params_mrmr = {"var_sel__method": ["MID", "MIQ"]}
-    params_base_regressors_pls = {"clf__base_regressor": pls_regressors}
-
-    classifiers = logistic_regression_comparison_suite(
-        params_clf,
-        params_base_regressors_pls,
-        params_select,
-        params_dim_red,
-        params_var_sel,
-        params_depth,
-        params_knn,
-        params_flr,
-        random_state=seed,
-    )
 
     return classifiers
 
