@@ -3,7 +3,11 @@
 import warnings
 
 import numpy as np
-from scipy.integrate import trapz
+
+try:
+    from scipy.integrate import trapz
+except ImportError:
+    from scipy.integrate import quad as trapz
 from scipy.special import expit
 from skfda.datasets import (
     fetch_cran,
