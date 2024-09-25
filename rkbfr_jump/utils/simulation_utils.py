@@ -3,11 +3,7 @@
 import warnings
 
 import numpy as np
-
-try:
-    from scipy.integrate import trapz
-except ImportError:
-    from scipy.integrate import quad as trapz
+from scipy.integrate import trapezoid
 from scipy.special import expit
 from skfda.datasets import (
     fetch_cran,
@@ -91,7 +87,7 @@ def generate_l2_dataset(
         rng = np.random.default_rng()
 
     beta = beta_coef(grid)
-    y = alpha0 + trapz(y=X * beta, x=grid)
+    y = alpha0 + trapezoid(y=X * beta, x=grid)
 
     if sigma2 > 0.0:
         y += np.sqrt(sigma2) * rng.standard_normal(size=len(y))
