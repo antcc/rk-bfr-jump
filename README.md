@@ -12,4 +12,4 @@ The reversible jump samplers use an implementation from the [Eryn](https://mikek
 
 The file `experiments.py` contains several experiments to test the performance of the models against other usual alternatives, functional or otherwise; a typical execution can be seen in the `launch.sh` file. Additionally, there are Jupyter notebooks that demonstrate the usage of the code.
 
-*Code developed for Python 3.11.*
+*Code developed for Python 3.11 (see requirements.txt or environment.yml).*
