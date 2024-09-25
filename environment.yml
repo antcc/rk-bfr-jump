@@ -13,6 +13,7 @@ dependencies:
     - scikit-fda=0.9.1
     - scikit-learn=1.4.0
     - numba=0.58.1
+    - jinja2=3.1.4
     - pip
     - pip:
-      - Eryn==1.1.7
+      - Eryn==1.1.9
