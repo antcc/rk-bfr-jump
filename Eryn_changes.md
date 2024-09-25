@@ -1,6 +1,4 @@
-These changes should be made to the source code of Eryn 1.1.7 for our package to work correctly.
+This change should be made to the source code of Eryn 1.1.9 for our package to work correctly (it does work without it but produces different results):
 
-- [backend.py] Add "axis=2" to the squeeze logic when there are no multiple leaves [744]. Change the text in gelman_rubin_diagnostic (can be ignored in final version) [763/722]
-- [combine.py] Add accepted.copy() in @setter of CombineMove, so that the initial accepted arrays (zeros) are independent for each move. [48/48]
-- [group.py] The condition should be only self.iter == 0 [133/134]
-- [ensemble.py] Remove the update_fn logic in run_mcmc method after burn-in (it is already included in the sample method).
+- **[eryn/moves/group.py, L.133]** The initial condition to setup friends should only be `self.iter == 0`, because
+the logic to update the friends every few iterations is already at the end of the method [See [Eryn#19](https://github.com/mikekatz04/Eryn/pull/19)].
