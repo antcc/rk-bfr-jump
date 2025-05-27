@@ -14,8 +14,8 @@ fi
 python experiments.py \
 	${KIND} ${DATA} ${DATA_NAME} \
 	--seed ${SEED} \
-	--nreps 10 \
-	--nwalkers 64 --ntemps 10 --nleaves-max 10 \
+	--nreps 3 \
+	--nwalkers 32 --ntemps 5 --nleaves-max 5 \
 	--nsteps 500 --nburn 500 --num-try 2 \
 	--scale-prior-beta 2.5 --lambda-p 3 \
 	--verbose 2

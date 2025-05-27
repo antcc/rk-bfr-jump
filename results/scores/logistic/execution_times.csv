@@ -1,0 +1,14 @@
+name,time_ref_mean,time_ref_std,time_eryn_mean,time_ref_std
+gp_bm_rkhs,200.0,4.0,474.6,11.2
+gp_bm_l2,132.6,6.6,295.5,2.3
+gp_fbm_rkhs,250.0,5.3,450.4,10.8
+gp_fbm_l2,261.8,5.7,381.2,107.5
+gp_ou_rkhs,124.9,3.2,377.8,26.1
+gp_ou_l2,195.1,3.9,367.4,4.0
+gp_sqexp_rkhs,127.9,2.5,415.5,31.2
+gp_sqexp_l2,197.3,7.2,370.9,9.1
+mixture_homoscedastic,197.3,2.8,404.5,10.9
+mixture_heteroscedastic,191.8,3.5,360.3,3.6
+phoneme,189.3,96.1,634.8,51.8
+medflies,111.5,1.3,476.9,9.8
+growth,49.0,1.7,397.1,18.4
